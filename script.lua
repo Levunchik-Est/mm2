@@ -1,9 +1,8 @@
--- Auto Farm MM2 Script with UI and Anti-AFK
--- Designed for use in executors like Synapse X, Script-Ware, KRNL, Delta
+-- MM2 Auto Farm Script v2 (Stable)
+-- Optimized for Synapse X, Script-Ware, KRNL, Delta
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local StarterGui = game:GetService("StarterGui")
 local CollectionService = game:GetService("CollectionService")
@@ -11,95 +10,110 @@ local CollectionService = game:GetService("CollectionService")
 local LocalPlayer = Players.LocalPlayer
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
-local Camera = workspace.CurrentCamera
 
--- Configuration
+-- ==========================================
+-- CONFIGURATION
+-- ==========================================
 local CONFIG = {
-    AntiAFKInterval = 5, -- Seconds between anti-afk movements
-    AntiAFKJitter = 0.5, -- Random jitter amount for movement
-    FarmCooldown = 1, -- Seconds to wait after collecting a candy
-    CandyTags = {"Candy", "Coin"} -- Tags often used for collectibles in MM2
+    AntiAFKInterval = 5, -- Seconds between anti-afk moves
+    AntiAFKJitter = 0.5, -- Random movement amount
+    FarmCooldown = 1, -- Seconds to wait after collecting
+    MinDistanceToCollect = 2, -- Minimum distance to consider candy "collected"
 }
 
--- State Management
+-- ==========================================
+-- STATE MANAGEMENT
+-- ==========================================
 local IsScriptActive = true
 local IsFarming = false
 local IsMinimized = false
+local FarmLoopTask = nil -- Task handle to stop the loop correctly
 local LastAntiAFKTime = tick()
 
 -- ==========================================
 -- ANTI-AFK MODULE (Always On)
 -- ==========================================
-local function AntiAFK()
-    local now = tick()
-    if now - LastAntiAFKTime >= CONFIG.AntiAFKInterval then
-        -- Micro-movement to simulate human activity
-        -- Slight random rotation of the camera or character head
-        local jitterX = math.random(-CONFIG.AntiAFKJitter, CONFIG.AntiAFKJitter)
-        local jitterY = math.random(-CONFIG.AntiAFKJitter, CONFIG.ANTI_AFK_JITTER or CONFIG.AntiAFKJitter)
+local function AntiAFKLoop()
+    while IsScriptActive do
+        task.wait(1) -- Check every second
         
-        -- Simulate key press by slightly moving the character forward/backward randomly
-        -- This prevents server-side AFK detection
-        local direction = Vector3.new(math.random(-1,1), 0, math.random(-1,1))
-        HumanoidRootPart.Velocity = direction * 5
-        
-        LastAntiAFKTime = now
+        local now = tick()
+        if now - LastAntiAFKTime >= CONFIG.AntiAFKInterval then
+            -- Micro-movement to simulate human activity
+            -- Moves character slightly in a random direction and back
+            local dirX = math.random(-CONFIG.AntiAFKJitter, CONFIG.AntiAFKJitter)
+            local dirZ = math.random(-CONFIG.AntiAFKJitter, CONFIG.ANTI_AFK_JITTER or CONFIG.AntiAFKJitter)
+            
+            -- Apply small velocity impulse
+            HumanoidRootPart.Velocity = Vector3.new(dirX, 0, dirZ) * 2
+            
+            -- Reset velocity quickly so it doesn't push player far
+            task.delay(0.2, function()
+                if HumanoidRootPart then
+                    HumanoidRootPart.Velocity = Vector3.zero
+                end
+            end)
+            
+            LastAntiAFKTime = now
+        end
     end
 end
 
-RunService.Heartbeat:Connect(AntiAFK)
+-- Start Anti-AFK immediately
+task.spawn(AntiAFKLoop)
 
 -- ==========================================
 -- AUTO FARM MODULE
 -- ==========================================
 local function FindNearestCandy()
-    local MinDistance = math.huge
     local NearestCandy = nil
+    local MinDist = math.huge
     
-    -- Search in Workspace for objects that might be candies
-    -- Note: In MM2, candies are often children of specific folders or tagged.
-    -- We scan all descendants for safety.
-    
-    local Candidates = {}
+    -- Iterate through all descendants of Workspace
+    -- We look for parts that are likely candies/coins
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Name:lower():find("candy") or obj.Name:lower():find("coin") then
-            -- Check if it's not already collected or invisible
-            if obj.Transparency < 1 and obj.CanCollide == false then -- Many collectibles are uncollidable
-                local Dist = (obj.Position - HumanoidRootPart.Position).Magnitude
-                if Dist < MinDistance then
-                    MinDistance = Dist
-                    NearestCandy = obj
+        if obj:IsA("BasePart") then
+            local nameLower = obj.Name:lower()
+            -- Common names for candies/coins in MM2 or similar games
+            if nameLower:find("candy") or nameLower:find("coin") or nameLower:find("sweet") then
+                -- Check if it's visible and not part of the player
+                if obj.Transparency < 1 and obj.Parent ~= Character then
+                    local dist = (obj.Position - HumanoidRootPart.Position).Magnitude
+                    if dist < MinDist then
+                        MinDist = dist
+                        NearestCandy = obj
+                    end
                 end
             end
         end
     end
-    
     return NearestCandy
 end
 
-local function TeleportToPosition(Pos)
-    -- Instant teleportation without animation delay
-    HumanoidRootPart.CFrame = CFrame.new(Pos + Vector3.new(0, 2, 0)) -- Slightly above to avoid clipping
-    -- Force sync to ensure server sees the position immediately
-    HumanoidRootPart.Anchored = true
-    task.wait(0.01)
-    HumanoidRootPart.Anchored = false
+local function TeleportTo(Pos)
+    -- Smooth but instant teleportation logic
+    -- Set CFrame directly. This is usually allowed by executors.
+    HumanoidRootPart.CFrame = CFrame.new(Pos + Vector3.new(0, 2, 0))
+    
+    -- Small sync wait to ensure server registers position before next action
+    task.wait(0.05)
 end
 
-local function StartFarmLoop()
+local function FarmLoop()
     while IsScriptActive and IsFarming do
         local Candy = FindNearestCandy()
         
         if Candy then
-            TeleportToPosition(Candy.Position)
+            TeleportTo(Candy.Position)
             
-            -- Small wait to allow collection event to trigger on server/client
-            task.wait(0.1) 
+            -- Wait for collection event to trigger
+            -- Sometimes we need to wait a tiny bit for the server to register the touch
+            task.wait(0.1)
             
-            -- Wait for cooldown
+            -- Wait for the configured cooldown
             task.wait(CONFIG.FarmCooldown)
         else
-            -- If no candy found, wait a bit before checking again to save CPU
+            -- No candy found, wait a bit before searching again
             task.wait(0.5)
         end
     end
@@ -109,7 +123,7 @@ end
 -- UI MODULE
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "MM2_Farm_UI"
+ScreenGui.Name = "MM2_Farm_UI_V2"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = StarterGui
@@ -117,8 +131,8 @@ ScreenGui.Parent = StarterGui
 -- Main Frame
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 200, 0, 100)
-MainFrame.Position = UDim2.new(0, 10, 0, 10) -- Top Left Corner
+MainFrame.Size = UDim2.new(0, 220, 0, 120)
+MainFrame.Position = UDim2.new(0, 10, 0, 10)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 MainFrame.BorderSizePixel = 0
 MainFrame.Parent = ScreenGui
@@ -158,7 +172,10 @@ CloseBtn.Parent = HeaderBar
 CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui:Destroy()
     IsScriptActive = false
-    IsFarming = false -- Stop farm loop
+    IsFarming = false
+    if FarmLoopTask then
+        FarmLoopTask:Cancel()
+    end
 end)
 
 -- Minimize Button (-)
@@ -187,8 +204,8 @@ local SwitchBtn = Instance.new("TextButton")
 SwitchBtn.Name = "SwitchBtn"
 SwitchBtn.Size = UDim2.new(0.8, 0, 0, 40)
 SwitchBtn.Position = UDim2.new(0.1, 0, 0, 40)
-SwitchBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
-SwitchBtn.Text = "Auto Farm: ON"
+SwitchBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+SwitchBtn.Text = "Auto Farm: OFF"
 SwitchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 SwitchBtn.Font = Enum.Font.GothamBold
 SwitchBtn.TextSize = 14
@@ -199,14 +216,17 @@ SwitchBtn.MouseButton1Click:Connect(function()
     if IsFarming then
         SwitchBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
         SwitchBtn.Text = "Auto Farm: ON"
-        -- Start the farming loop if not already running
-        -- We use a coroutine to ensure it runs independently
-        if not FarmThread or FarmThread.Status == Enum.ThreadStatus.Terminated then
-            FarmThread = task.spawn(StartFarmLoop)
+        -- Start farming loop if not running
+        if not FarmLoopTask or FarmLoopTask.Status == Enum.ThreadStatus.Terminated then
+            FarmLoopTask = task.spawn(FarmLoop)
         end
     else
         SwitchBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
         SwitchBtn.Text = "Auto Farm: OFF"
+        -- Stop farming loop
+        if FarmLoopTask then
+            FarmLoopTask:Cancel()
+        end
     end
 end)
 
@@ -215,7 +235,8 @@ local MiniIcon = Instance.new("ImageButton")
 MiniIcon.Name = "MiniIcon"
 MiniIcon.Size = UDim2.new(0, 40, 0, 40)
 MiniIcon.Position = UDim2.new(0, 10, 0, 10)
-MiniIcon.Image = "rbxassetid://123456789" -- Generic placeholder ID, replace if needed
+-- Using a generic Roblox icon ID that usually works
+MiniIcon.Image = "rbxassetid://4458903098" 
 MiniIcon.BackgroundTransparency = 0.5
 MiniIcon.Parent = ScreenGui
 MiniIcon.Visible = false
