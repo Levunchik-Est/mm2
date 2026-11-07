@@ -75,6 +75,7 @@ MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Draggable = true
+MainFrame.ZIndex = 1
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
@@ -86,12 +87,15 @@ MainStroke.Color = Color3.fromRGB(60, 60, 70)
 MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
--- Title Bar
+-- ============================================================
+-- TITLE BAR (always on top)
+-- ============================================================
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 35)
 TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 TitleBar.BorderSizePixel = 0
+TitleBar.ZIndex = 10
 TitleBar.Parent = MainFrame
 
 local TitleCorner = Instance.new("UICorner")
@@ -103,6 +107,7 @@ TitleBarFix.Size = UDim2.new(1, 0, 0, 10)
 TitleBarFix.Position = UDim2.new(0, 0, 1, -10)
 TitleBarFix.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 TitleBarFix.BorderSizePixel = 0
+TitleBarFix.ZIndex = 10
 TitleBarFix.Parent = TitleBar
 
 local TitleLabel = Instance.new("TextLabel")
@@ -114,6 +119,7 @@ TitleLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
 TitleLabel.TextSize = 14
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 local MinButton = Instance.new("TextButton")
@@ -124,6 +130,7 @@ MinButton.Text = "−"
 MinButton.TextColor3 = Color3.fromRGB(180, 180, 190)
 MinButton.TextSize = 20
 MinButton.Font = Enum.Font.GothamBold
+MinButton.ZIndex = 11
 MinButton.Parent = TitleBar
 
 local CloseButton = Instance.new("TextButton")
@@ -134,10 +141,11 @@ CloseButton.Text = "X"
 CloseButton.TextColor3 = Color3.fromRGB(255, 100, 100)
 CloseButton.TextSize = 16
 CloseButton.Font = Enum.Font.GothamBold
+CloseButton.ZIndex = 11
 CloseButton.Parent = TitleBar
 
 -- ============================================================
--- TAB BAR
+-- TAB BAR (below title bar)
 -- ============================================================
 local TabBar = Instance.new("Frame")
 TabBar.Name = "TabBar"
@@ -145,6 +153,7 @@ TabBar.Size = UDim2.new(1, 0, 0, 32)
 TabBar.Position = UDim2.new(0, 0, 0, 35)
 TabBar.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
 TabBar.BorderSizePixel = 0
+TabBar.ZIndex = 5
 TabBar.Parent = MainFrame
 
 local TabBarLayout = Instance.new("UIListLayout")
@@ -152,7 +161,7 @@ TabBarLayout.FillDirection = Enum.FillDirection.Horizontal
 TabBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
 TabBarLayout.Parent = TabBar
 
-local Tabs = {} -- [name] = { button = ..., content = ... }
+local Tabs = {}
 local ActiveTab = nil
 
 local function SetActiveTab(name)
@@ -182,6 +191,7 @@ local function CreateTab(name, order)
     button.TextSize = 12
     button.Font = Enum.Font.GothamBold
     button.LayoutOrder = order
+    button.ZIndex = 6
     button.Parent = TabBar
 
     local content = Instance.new("Frame")
@@ -190,6 +200,7 @@ local function CreateTab(name, order)
     content.Position = UDim2.new(0, 10, 0, 75)
     content.BackgroundTransparency = 1
     content.Visible = false
+    content.ZIndex = 2
     content.Parent = MainFrame
 
     local scroll = Instance.new("ScrollingFrame")
@@ -200,6 +211,7 @@ local function CreateTab(name, order)
     scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 90)
     scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
     scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.ZIndex = 3
     scroll.Parent = content
 
     local layout = Instance.new("UIListLayout")
@@ -217,7 +229,6 @@ local function CreateTab(name, order)
     return scroll
 end
 
--- Create 4 tabs
 local FarmTab = CreateTab("Farm", 1)
 local VisualsTab = CreateTab("Visuals", 2)
 local MurdererTab = CreateTab("Murderer", 3)
@@ -231,6 +242,7 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     ToggleFrame.Size = UDim2.new(1, -8, 0, 45)
     ToggleFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
     ToggleFrame.BorderSizePixel = 0
+    ToggleFrame.ZIndex = 4
     ToggleFrame.Parent = parent
 
     local ToggleCorner = Instance.new("UICorner")
@@ -246,6 +258,7 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     Label.TextSize = 13
     Label.Font = Enum.Font.Gotham
     Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.ZIndex = 5
     Label.Parent = ToggleFrame
 
     local SwitchBg = Instance.new("Frame")
@@ -253,6 +266,7 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     SwitchBg.Position = UDim2.new(1, -56, 0.5, -12)
     SwitchBg.BackgroundColor3 = initialValue and Color3.fromRGB(80, 180, 100) or Color3.fromRGB(70, 70, 78)
     SwitchBg.BorderSizePixel = 0
+    SwitchBg.ZIndex = 5
     SwitchBg.Parent = ToggleFrame
 
     local SwitchCorner = Instance.new("UICorner")
@@ -264,6 +278,7 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     Knob.Position = initialValue and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
     Knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     Knob.BorderSizePixel = 0
+    Knob.ZIndex = 6
     Knob.Parent = SwitchBg
 
     local KnobCorner = Instance.new("UICorner")
@@ -274,6 +289,7 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     ClickArea.Size = UDim2.new(1, 0, 1, 0)
     ClickArea.BackgroundTransparency = 1
     ClickArea.Text = ""
+    ClickArea.ZIndex = 7
     ClickArea.Parent = ToggleFrame
 
     local currentValue = initialValue
@@ -313,6 +329,7 @@ local function CreatePlaceholder(parent, text)
     lbl.TextColor3 = Color3.fromRGB(110, 110, 120)
     lbl.TextSize = 12
     lbl.Font = Enum.Font.GothamItalic
+    lbl.ZIndex = 4
     lbl.Parent = parent
 
     local c = Instance.new("UICorner")
@@ -634,12 +651,12 @@ local ESPToggle, espUpdater = CreateToggle(
 )
 ESPToggle.LayoutOrder = 1
 
--- ESP Legend
 local LegendFrame = Instance.new("Frame")
 LegendFrame.Size = UDim2.new(1, -8, 0, 75)
 LegendFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 LegendFrame.BorderSizePixel = 0
 LegendFrame.LayoutOrder = 2
+LegendFrame.ZIndex = 4
 LegendFrame.Parent = VisualsTab
 
 local LegendCorner = Instance.new("UICorner")
@@ -652,6 +669,7 @@ local function MakeLegendRow(parent, y, color, text)
     dot.Position = UDim2.new(0, 12, 0, y)
     dot.BackgroundColor3 = color
     dot.BorderSizePixel = 0
+    dot.ZIndex = 5
     dot.Parent = parent
     local dotC = Instance.new("UICorner")
     dotC.CornerRadius = UDim.new(1, 0)
@@ -666,6 +684,7 @@ local function MakeLegendRow(parent, y, color, text)
     lbl.TextSize = 11
     lbl.Font = Enum.Font.Gotham
     lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 5
     lbl.Parent = parent
 end
 
@@ -681,6 +700,7 @@ TPButtonFrame.Size = UDim2.new(1, -8, 0, 45)
 TPButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
 TPButtonFrame.BorderSizePixel = 0
 TPButtonFrame.LayoutOrder = 1
+TPButtonFrame.ZIndex = 4
 TPButtonFrame.Parent = MurdererTab
 
 local TPButtonCorner = Instance.new("UICorner")
@@ -695,6 +715,7 @@ TPButton.Text = "🎯 TP к убийце (одноразово)"
 TPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 TPButton.TextSize = 13
 TPButton.Font = Enum.Font.GothamBold
+TPButton.ZIndex = 5
 TPButton.Parent = TPButtonFrame
 
 local TPButtonCorner2 = Instance.new("UICorner")
@@ -729,6 +750,7 @@ MiniIcon.TextColor3 = Color3.fromRGB(220, 220, 230)
 MiniIcon.TextSize = 16
 MiniIcon.Font = Enum.Font.GothamBold
 MiniIcon.Visible = false
+MiniIcon.ZIndex = 20
 MiniIcon.Parent = ScreenGui
 
 local MiniCorner = Instance.new("UICorner")
@@ -786,4 +808,4 @@ end)
 -- Activate Farm tab by default
 SetActiveTab("Farm")
 
-print("[MM2 Automation] Script loaded. 4 tabs ready.")
+print("[MM2 Automation] Script loaded. 4 tabs ready. (Min/Close fixed)")
