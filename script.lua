@@ -15,12 +15,13 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- CONFIGURATION
 -- ============================================================
 local CONFIG = {
-    CANDY_FARM_INTERVAL = 2.0,      -- Seconds between teleports
+    CANDY_FARM_INTERVAL = 2.0,
     CANDY_SEARCH_RADIUS = 300,
     ANTI_AFK_INTERVAL = 600,
     MAX_CANDY_LIMIT = 200,
     LOBBY_POSITION = Vector3.new(0, 10, 0),
     ESP_UPDATE_INTERVAL = 0.5,
+    COLLECT_NUDGE_DURATION = 0.15,   -- How long to nudge for contact registration
 }
 
 local ESP_COLORS = {
@@ -44,7 +45,19 @@ local State = {
     CandyCount = 0,
     ESPHighlights = {},
     Connections = {},
+    CurrentCharacter = nil,
 }
+
+-- ============================================================
+-- CHARACTER REFRESH (fix: functions survive respawn)
+-- ============================================================
+local function OnCharacterAdded(character)
+    State.CurrentCharacter = character
+    -- Do NOT stop threads here. They check State flags, not character refs.
+end
+
+State.CurrentCharacter = LocalPlayer.Character
+LocalPlayer.CharacterAdded:Connect(OnCharacterAdded)
 
 -- ============================================================
 -- GUI (Modern Interface)
@@ -210,10 +223,10 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
 end
 
 -- ============================================================
--- CANDY FARM
+-- CANDY FARM (with contact nudge fix)
 -- ============================================================
 local function FindNearestCandy()
-    local character = LocalPlayer.Character
+    local character = State.CurrentCharacter or LocalPlayer.Character
     if not character then return nil end
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return nil end
@@ -239,17 +252,34 @@ local function FindNearestCandy()
     return nearestCandy
 end
 
-local function TeleportTo(targetPart)
-    local character = LocalPlayer.Character
+local function TeleportToAndCollect(targetPart)
+    local character = State.CurrentCharacter or LocalPlayer.Character
     if not character then return false end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+
+    -- Step 1: Teleport slightly above candy
     local success = pcall(function()
-        character:PivotTo(CFrame.new(targetPart.Position + Vector3.new(0, 3, 0)))
+        character:PivotTo(CFrame.new(targetPart.Position + Vector3.new(0, 2, 0)))
     end)
-    return success
+    if not success then return false end
+
+    -- Step 2: Force contact registration (fix: no manual movement needed)
+    -- Briefly enable collision on root and nudge down to touch candy
+    local originalCollide = rootPart.CanCollide
+    rootPart.CanCollide = true
+    task.wait(CONFIG.COLLECT_NUDGE_DURATION)
+    pcall(function()
+        rootPart.CFrame = rootPart.CFrame * CFrame.new(0, -1, 0)
+    end)
+    task.wait(0.05)
+    rootPart.CanCollide = originalCollide
+
+    return true
 end
 
 local function TeleportToLobby()
-    local character = LocalPlayer.Character
+    local character = State.CurrentCharacter or LocalPlayer.Character
     if not character then return end
     pcall(function()
         character:PivotTo(CFrame.new(CONFIG.LOBBY_POSITION))
@@ -261,11 +291,11 @@ local function StartCandyFarm()
     State.CandyCount = 0
     State.CandyFarmThread = task.spawn(function()
         while State.CandyFarmEnabled and not State.IsClosed do
-            local character = LocalPlayer.Character
+            local character = State.CurrentCharacter or LocalPlayer.Character
             if not character then task.wait(1) continue end
             local candy = FindNearestCandy()
             if candy then
-                local success = TeleportTo(candy)
+                local success = TeleportToAndCollect(candy)
                 if success then
                     State.CandyCount = State.CandyCount + 1
                     if State.CandyCount >= CONFIG.MAX_CANDY_LIMIT then
@@ -298,7 +328,7 @@ local function StartAntiAFK()
         while State.AntiAFKEnabled and not State.IsClosed do
             task.wait(CONFIG.ANTI_AFK_INTERVAL)
             if State.IsClosed or not State.AntiAFKEnabled then break end
-            local character = LocalPlayer.Character
+            local character = State.CurrentCharacter or LocalPlayer.Character
             if character then
                 local rootPart = character:FindFirstChild("HumanoidRootPart")
                 if rootPart then
@@ -434,7 +464,7 @@ end
 -- TP TO MURDERER (One-shot button)
 -- ============================================================
 local function TeleportToMurderer()
-    local localChar = LocalPlayer.Character
+    local localChar = State.CurrentCharacter or LocalPlayer.Character
     if not localChar then return end
     local localRoot = localChar:FindFirstChild("HumanoidRootPart")
     if not localRoot then return end
@@ -498,9 +528,7 @@ local ESPFrame, espUpdater = CreateToggle(
     end
 )
 
--- ============================================================
 -- TP TO MURDERER BUTTON (One-shot)
--- ============================================================
 local TPButtonFrame = Instance.new("Frame")
 TPButtonFrame.Size = UDim2.new(1, 0, 0, 45)
 TPButtonFrame.Position = UDim2.new(0, 0, 0, 180)
@@ -575,7 +603,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 30)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: 2.0s/teleport, limit " .. CONFIG.MAX_CANDY_LIMIT .. "."
+InfoLabel.Text = "Candy Farm: 2.0s/teleport, survives respawn."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -639,7 +667,7 @@ CloseButton.MouseButton1Click:Connect(function()
     State.Connections = {}
     ClearAllHighlights()
     ScreenGui:Destroy()
-    local character = LocalPlayer.Character
+    local character = State.CurrentCharacter or LocalPlayer.Character
     if character then
         local rootPart = character:FindFirstChild("HumanoidRootPart")
         if rootPart then
@@ -651,11 +679,4 @@ CloseButton.MouseButton1Click:Connect(function()
     end
 end)
 
-LocalPlayer.CharacterRemoving:Connect(function()
-    if State.CandyFarmThread then
-        task.cancel(State.CandyFarmThread)
-        State.CandyFarmThread = nil
-    end
-end)
-
-print("[MM2 Automation] Script loaded. (Teleport interval: 2.0s)")
+print("[MM2 Automation] Script loaded. (Survives respawn + auto-collect fix)")
