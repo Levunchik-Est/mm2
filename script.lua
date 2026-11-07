@@ -15,7 +15,7 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- CONFIGURATION
 -- ============================================================
 local CONFIG = {
-    CANDY_FARM_INTERVAL = 0.5,      -- Seconds between teleports
+    CANDY_FARM_INTERVAL = 1.5,      -- Seconds between teleports
     CANDY_SEARCH_RADIUS = 300,      -- Studs to search for candy
     ANTI_AFK_INTERVAL = 600,        -- 10 minutes (600 seconds)
     MAX_CANDY_LIMIT = 200,          -- Auto-stop after this many candies (adjust as needed)
@@ -398,7 +398,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 40)
 InfoLabel.Position = UDim2.new(0, 0, 0, 120)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm teleports every 0.5s.\nAuto-stops at " .. CONFIG.MAX_CANDY_LIMIT .. " candies."
+InfoLabel.Text = "Candy Farm teleports every 1.5s.\nAuto-stops at " .. CONFIG.MAX_CANDY_LIMIT .. " candies."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
