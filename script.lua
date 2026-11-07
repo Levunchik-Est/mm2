@@ -1,5 +1,5 @@
 -- ============================================================
--- MM2 Candy Farm & Anti-AFK & Role ESP & Push Murderer
+-- MM2 Candy Farm & Anti-AFK & Role ESP & TP to Murderer
 -- Requirements: Executor with LocalScript execution capability
 -- ============================================================
 
@@ -15,14 +15,12 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- CONFIGURATION
 -- ============================================================
 local CONFIG = {
-    CANDY_FARM_INTERVAL = 3.0,
+    CANDY_FARM_INTERVAL = 2.0,      -- Seconds between teleports (reduced to 2.0)
     CANDY_SEARCH_RADIUS = 300,
     ANTI_AFK_INTERVAL = 600,
     MAX_CANDY_LIMIT = 200,
     LOBBY_POSITION = Vector3.new(0, 10, 0),
     ESP_UPDATE_INTERVAL = 0.5,
-    PUSH_IMPULSE = 500,             -- Studs/sec impulse to push murderer into void
-    PUSH_DIRECTION = Vector3.new(1, 1, 0), -- Direction (will be normalized)
 }
 
 local ESP_COLORS = {
@@ -433,21 +431,14 @@ local function StopESP()
 end
 
 -- ============================================================
--- PUSH MURDERER OUT OF MAP (One-shot button)
+-- TP TO MURDERER (One-shot button)
 -- ============================================================
-local function PushMurderer()
+local function TeleportToMurderer()
     local localChar = LocalPlayer.Character
-    if not localChar then
-        print("[MM2] No local character.")
-        return
-    end
+    if not localChar then return end
     local localRoot = localChar:FindFirstChild("HumanoidRootPart")
-    if not localRoot then
-        print("[MM2] No local HumanoidRootPart.")
-        return
-    end
+    if not localRoot then return end
 
-    -- Find murderer
     local murdererPlayer = nil
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
@@ -471,37 +462,10 @@ local function PushMurderer()
         return
     end
 
-    -- Step 1: Teleport INSIDE murderer's body (exact same position)
     pcall(function()
-        localChar:PivotTo(murdererRoot.CFrame)
+        localChar:PivotTo(murdererRoot.CFrame * CFrame.new(0, 0, -3))
     end)
-
-    -- Step 2: Small wait for physics to register overlap
-    task.wait(0.05)
-
-    -- Step 3: Apply strong impulse to LOCAL character toward direction
-    -- (physics engine will push murderer away due to collision)
-    local dir = CONFIG.PUSH_DIRECTION
-    if dir.Magnitude > 0 then dir = dir.Unit end
-    local impulse = dir * CONFIG.PUSH_IMPULSE
-
-    pcall(function()
-        localRoot.AssemblyLinearVelocity = impulse
-    end)
-
-    -- Step 4: Also nudge our own character slightly upward+outward to force separation
-    task.wait(0.05)
-    pcall(function()
-        localChar:PivotTo(murdererRoot.CFrame * CFrame.new(0, 3, -2))
-    end)
-
-    -- Step 5: Give murderer a shove via our velocity (client-side physics)
-    task.wait(0.05)
-    pcall(function()
-        localRoot.AssemblyLinearVelocity = impulse
-    end)
-
-    print("[MM2] Attempted to push murderer " .. murdererPlayer.Name .. " out of map.")
+    print("[MM2] Teleported to murderer: " .. murdererPlayer.Name)
 end
 
 -- ============================================================
@@ -535,36 +499,36 @@ local ESPFrame, espUpdater = CreateToggle(
 )
 
 -- ============================================================
--- PUSH MURDERER BUTTON (One-shot, not toggle)
+-- TP TO MURDERER BUTTON (One-shot)
 -- ============================================================
-local PushButtonFrame = Instance.new("Frame")
-PushButtonFrame.Size = UDim2.new(1, 0, 0, 45)
-PushButtonFrame.Position = UDim2.new(0, 0, 0, 180)
-PushButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-PushButtonFrame.BorderSizePixel = 0
-PushButtonFrame.Parent = ContentFrame
+local TPButtonFrame = Instance.new("Frame")
+TPButtonFrame.Size = UDim2.new(1, 0, 0, 45)
+TPButtonFrame.Position = UDim2.new(0, 0, 0, 180)
+TPButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
+TPButtonFrame.BorderSizePixel = 0
+TPButtonFrame.Parent = ContentFrame
 
-local PushButtonCorner = Instance.new("UICorner")
-PushButtonCorner.CornerRadius = UDim.new(0, 6)
-PushButtonCorner.Parent = PushButtonFrame
+local TPButtonCorner = Instance.new("UICorner")
+TPButtonCorner.CornerRadius = UDim.new(0, 6)
+TPButtonCorner.Parent = TPButtonFrame
 
-local PushButton = Instance.new("TextButton")
-PushButton.Size = UDim2.new(1, -16, 1, -10)
-PushButton.Position = UDim2.new(0, 8, 0, 5)
-PushButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-PushButton.Text = "☠️ Выкинуть убийцу (одноразово)"
-PushButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-PushButton.TextSize = 13
-PushButton.Font = Enum.Font.GothamBold
-PushButton.Parent = PushButtonFrame
+local TPButton = Instance.new("TextButton")
+TPButton.Size = UDim2.new(1, -16, 1, -10)
+TPButton.Position = UDim2.new(0, 8, 0, 5)
+TPButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+TPButton.Text = "🎯 TP к убийце (одноразово)"
+TPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+TPButton.TextSize = 13
+TPButton.Font = Enum.Font.GothamBold
+TPButton.Parent = TPButtonFrame
 
-local PushButtonCorner2 = Instance.new("UICorner")
-PushButtonCorner2.CornerRadius = UDim.new(0, 6)
-PushButtonCorner2.Parent = PushButton
+local TPButtonCorner2 = Instance.new("UICorner")
+TPButtonCorner2.CornerRadius = UDim.new(0, 6)
+TPButtonCorner2.Parent = TPButton
 
-PushButton.MouseButton1Click:Connect(function()
+TPButton.MouseButton1Click:Connect(function()
     if State.IsClosed then return end
-    PushMurderer()
+    TeleportToMurderer()
 end)
 
 -- ESP Legend
@@ -611,7 +575,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 40)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: 3.0s/teleport, limit " .. CONFIG.MAX_CANDY_LIMIT .. ".\nPush: teleports into murderer's body + shoves."
+InfoLabel.Text = "Candy Farm: 2.0s/teleport, limit " .. CONFIG.MAX_CANDY_LIMIT .. ".\nTP button: teleports YOU to murderer."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -694,4 +658,4 @@ LocalPlayer.CharacterRemoving:Connect(function()
     end
 end)
 
-print("[MM2 Automation] Script loaded. (Push Murderer button added — one-shot)")
+print("[MM2 Automation] Script loaded. (Teleport interval: 2.0s)")
