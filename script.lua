@@ -74,7 +74,7 @@ MainFrame.Position = UDim2.new(0, 50, 0, 50)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
-MainFrame.Draggable = false -- manual drag below
+MainFrame.Draggable = false
 MainFrame.ZIndex = 1
 MainFrame.Parent = ScreenGui
 
@@ -88,7 +88,7 @@ MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
 -- ============================================================
--- TITLE BAR (drag handle, no buttons here)
+-- TITLE BAR (drag handle only)
 -- ============================================================
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
@@ -124,7 +124,7 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- MIN/CLOSE BUTTONS — placed directly in MainFrame, on top of all
+-- MIN/CLOSE BUTTONS (top layer, in MainFrame)
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
@@ -155,7 +155,7 @@ CloseButton.ZIndex = 100
 CloseButton.Parent = MainFrame
 
 -- ============================================================
--- MANUAL DRAG (only from title bar, not from buttons)
+-- DRAG (title bar only, RenderStepped, no global InputEnded)
 -- ============================================================
 local dragging = false
 local dragStart = nil
@@ -170,22 +170,19 @@ TitleBar.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-    or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
+RunService.RenderStepped:Connect(function()
+    if not dragging then return end
+    if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+    and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.Touch) then
         dragging = false
+        return
     end
+    local mousePos = UserInputService:GetMouseLocation()
+    local delta = mousePos - dragStart
+    MainFrame.Position = UDim2.new(
+        startPos.X.Scale, startPos.X.Offset + delta.X,
+        startPos.Y.Scale, startPos.Y.Offset + delta.Y
+    )
 end)
 
 -- ============================================================
@@ -244,33 +241,23 @@ local function CreateTab(name, order)
     content.Position = UDim2.new(0, 10, 0, 75)
     content.BackgroundTransparency = 1
     content.Visible = false
+    content.ClipsDescendants = false
     content.ZIndex = 2
     content.Parent = MainFrame
-
-    local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1, 0, 1, 0)
-    scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel = 0
-    scroll.ScrollBarThickness = 4
-    scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 90)
-    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    scroll.ZIndex = 3
-    scroll.Parent = content
 
     local layout = Instance.new("UIListLayout")
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Padding = UDim.new(0, 8)
-    layout.Parent = scroll
+    layout.Parent = content
 
-    Tabs[name] = { button = button, content = content, scroll = scroll }
+    Tabs[name] = { button = button, content = content }
 
     button.MouseButton1Click:Connect(function()
         if State.IsClosed then return end
         SetActiveTab(name)
     end)
 
-    return scroll
+    return content
 end
 
 local FarmTab = CreateTab("Farm", 1)
@@ -329,11 +316,13 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     KnobCorner.CornerRadius = UDim.new(1, 0)
     KnobCorner.Parent = Knob
 
+    -- ClickArea on TOP with high ZIndex
     local ClickArea = Instance.new("TextButton")
     ClickArea.Size = UDim2.new(1, 0, 1, 0)
     ClickArea.BackgroundTransparency = 1
     ClickArea.Text = ""
-    ClickArea.ZIndex = 7
+    ClickArea.ZIndex = 10
+    ClickArea.Active = true
     ClickArea.Parent = ToggleFrame
 
     local currentValue = initialValue
@@ -851,4 +840,4 @@ end)
 
 SetActiveTab("Farm")
 
-print("[MM2 Automation] Script loaded. 4 tabs ready. (Min/Close moved to top layer)")
+print("[MM2 Automation] Script loaded. 4 tabs ready. (All buttons fixed)")
