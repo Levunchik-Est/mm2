@@ -15,7 +15,7 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- CONFIGURATION
 -- ============================================================
 local CONFIG = {
-    CANDY_FARM_INTERVAL = 2.0,      -- Seconds between teleports (reduced to 2.0)
+    CANDY_FARM_INTERVAL = 2.0,      -- Seconds between teleports
     CANDY_SEARCH_RADIUS = 300,
     ANTI_AFK_INTERVAL = 600,
     MAX_CANDY_LIMIT = 200,
@@ -57,7 +57,7 @@ ScreenGui.Parent = PlayerGui
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 280, 0, 430)
+MainFrame.Size = UDim2.new(0, 280, 0, 385)
 MainFrame.Position = UDim2.new(0, 50, 0, 50)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
@@ -572,10 +572,10 @@ MakeLegendRow(LegendFrame, 36, ESP_COLORS.Innocent, "Innocent")
 
 -- Info Label
 local InfoLabel = Instance.new("TextLabel")
-InfoLabel.Size = UDim2.new(1, 0, 0, 40)
+InfoLabel.Size = UDim2.new(1, 0, 0, 30)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: 2.0s/teleport, limit " .. CONFIG.MAX_CANDY_LIMIT .. ".\nTP button: teleports YOU to murderer."
+InfoLabel.Text = "Candy Farm: 2.0s/teleport, limit " .. CONFIG.MAX_CANDY_LIMIT .. "."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
