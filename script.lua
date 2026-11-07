@@ -74,7 +74,7 @@ MainFrame.Position = UDim2.new(0, 50, 0, 50)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
-MainFrame.Draggable = true
+MainFrame.Draggable = false -- manual drag below
 MainFrame.ZIndex = 1
 MainFrame.Parent = ScreenGui
 
@@ -88,13 +88,14 @@ MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
 -- ============================================================
--- TITLE BAR (always on top)
+-- TITLE BAR (drag handle, no buttons here)
 -- ============================================================
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 35)
 TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 TitleBar.BorderSizePixel = 0
+TitleBar.Active = true
 TitleBar.ZIndex = 10
 TitleBar.Parent = MainFrame
 
@@ -122,7 +123,11 @@ TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
+-- ============================================================
+-- MIN/CLOSE BUTTONS — placed directly in MainFrame, on top of all
+-- ============================================================
 local MinButton = Instance.new("TextButton")
+MinButton.Name = "MinButton"
 MinButton.Size = UDim2.new(0, 30, 0, 30)
 MinButton.Position = UDim2.new(1, -65, 0, 2)
 MinButton.BackgroundTransparency = 1
@@ -130,10 +135,13 @@ MinButton.Text = "−"
 MinButton.TextColor3 = Color3.fromRGB(180, 180, 190)
 MinButton.TextSize = 20
 MinButton.Font = Enum.Font.GothamBold
-MinButton.ZIndex = 11
-MinButton.Parent = TitleBar
+MinButton.AutoButtonColor = false
+MinButton.Active = true
+MinButton.ZIndex = 100
+MinButton.Parent = MainFrame
 
 local CloseButton = Instance.new("TextButton")
+CloseButton.Name = "CloseButton"
 CloseButton.Size = UDim2.new(0, 30, 0, 30)
 CloseButton.Position = UDim2.new(1, -35, 0, 2)
 CloseButton.BackgroundTransparency = 1
@@ -141,11 +149,47 @@ CloseButton.Text = "X"
 CloseButton.TextColor3 = Color3.fromRGB(255, 100, 100)
 CloseButton.TextSize = 16
 CloseButton.Font = Enum.Font.GothamBold
-CloseButton.ZIndex = 11
-CloseButton.Parent = TitleBar
+CloseButton.AutoButtonColor = false
+CloseButton.Active = true
+CloseButton.ZIndex = 100
+CloseButton.Parent = MainFrame
 
 -- ============================================================
--- TAB BAR (below title bar)
+-- MANUAL DRAG (only from title bar, not from buttons)
+-- ============================================================
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- ============================================================
+-- TAB BAR
 -- ============================================================
 local TabBar = Instance.new("Frame")
 TabBar.Name = "TabBar"
@@ -805,7 +849,6 @@ CloseButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- Activate Farm tab by default
 SetActiveTab("Farm")
 
-print("[MM2 Automation] Script loaded. 4 tabs ready. (Min/Close fixed)")
+print("[MM2 Automation] Script loaded. 4 tabs ready. (Min/Close moved to top layer)")
