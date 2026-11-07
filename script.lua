@@ -1,5 +1,5 @@
 -- ============================================================
--- MM2 Candy Farm & Anti-AFK & Role ESP & Void Killer Script
+-- MM2 Candy Farm & Anti-AFK & Role ESP & TP to Murderer
 -- Requirements: Executor with LocalScript execution capability
 -- ============================================================
 
@@ -15,43 +15,39 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- CONFIGURATION
 -- ============================================================
 local CONFIG = {
-    CANDY_FARM_INTERVAL = 3.0,      -- Seconds between teleports (doubled to avoid kick)
-    CANDY_SEARCH_RADIUS = 300,      -- Studs to search for candy
-    ANTI_AFK_INTERVAL = 600,        -- 10 minutes (600 seconds)
-    MAX_CANDY_LIMIT = 200,          -- Auto-stop after this many candies
-    LOBBY_POSITION = Vector3.new(0, 10, 0), -- Fallback lobby position
-    ESP_UPDATE_INTERVAL = 0.5,      -- ESP refresh rate
-    VOID_POSITION = Vector3.new(999999, -5000, 999999), -- Far below map → instant void death
+    CANDY_FARM_INTERVAL = 3.0,
+    CANDY_SEARCH_RADIUS = 300,
+    ANTI_AFK_INTERVAL = 600,
+    MAX_CANDY_LIMIT = 200,
+    LOBBY_POSITION = Vector3.new(0, 10, 0),
+    ESP_UPDATE_INTERVAL = 0.5,
 }
 
--- ESP colors
 local ESP_COLORS = {
-    Murderer = Color3.fromRGB(255, 0, 0),      -- Red
-    Sheriff  = Color3.fromRGB(0, 120, 255),    -- Blue
-    Innocent = Color3.fromRGB(0, 220, 80),     -- Green
+    Murderer = Color3.fromRGB(255, 0, 0),
+    Sheriff  = Color3.fromRGB(0, 120, 255),
+    Innocent = Color3.fromRGB(0, 220, 80),
 }
 
 -- ============================================================
--- STATE MANAGEMENT
+-- STATE
 -- ============================================================
 local State = {
     CandyFarmEnabled = false,
     AntiAFKEnabled = false,
     ESPEnabled = false,
-    VoidKillerEnabled = false,
     IsMinimized = false,
     IsClosed = false,
     CandyFarmThread = nil,
     AntiAFKThread = nil,
     ESPThread = nil,
-    VoidKillerThread = nil,
     CandyCount = 0,
     ESPHighlights = {},
     Connections = {},
 }
 
 -- ============================================================
--- GUI CREATION (Modern, Clean Interface)
+-- GUI (Modern Interface)
 -- ============================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MM2_Automation_Hub"
@@ -61,7 +57,7 @@ ScreenGui.Parent = PlayerGui
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 280, 0, 445)
+MainFrame.Size = UDim2.new(0, 280, 0, 430)
 MainFrame.Position = UDim2.new(0, 50, 0, 50)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
@@ -135,7 +131,7 @@ ContentFrame.BackgroundTransparency = 1
 ContentFrame.Parent = MainFrame
 
 -- ============================================================
--- TOGGLE SWITCH HELPER
+-- TOGGLE HELPER
 -- ============================================================
 local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
     local ToggleFrame = Instance.new("Frame")
@@ -204,9 +200,7 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
         if State.IsClosed then return end
         currentValue = not currentValue
         updateVisual(currentValue)
-        if callback then
-            callback(currentValue)
-        end
+        if callback then callback(currentValue) end
     end)
 
     return ToggleFrame, function(val)
@@ -216,12 +210,11 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
 end
 
 -- ============================================================
--- CANDY FARM LOGIC
+-- CANDY FARM
 -- ============================================================
 local function FindNearestCandy()
     local character = LocalPlayer.Character
     if not character then return nil end
-
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return nil end
 
@@ -243,48 +236,33 @@ local function FindNearestCandy()
             end
         end
     end
-
     return nearestCandy
 end
 
 local function TeleportTo(targetPart)
     local character = LocalPlayer.Character
     if not character then return false end
-
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return false end
-
-    local success, err = pcall(function()
+    local success = pcall(function()
         character:PivotTo(CFrame.new(targetPart.Position + Vector3.new(0, 3, 0)))
     end)
-
     return success
 end
 
 local function TeleportToLobby()
     local character = LocalPlayer.Character
     if not character then return end
-
     pcall(function()
         character:PivotTo(CFrame.new(CONFIG.LOBBY_POSITION))
     end)
 end
 
 local function StartCandyFarm()
-    if State.CandyFarmThread then
-        task.cancel(State.CandyFarmThread)
-    end
-
+    if State.CandyFarmThread then task.cancel(State.CandyFarmThread) end
     State.CandyCount = 0
-
     State.CandyFarmThread = task.spawn(function()
         while State.CandyFarmEnabled and not State.IsClosed do
             local character = LocalPlayer.Character
-            if not character then
-                task.wait(1)
-                continue
-            end
-
+            if not character then task.wait(1) continue end
             local candy = FindNearestCandy()
             if candy then
                 local success = TeleportTo(candy)
@@ -292,15 +270,12 @@ local function StartCandyFarm()
                     State.CandyCount = State.CandyCount + 1
                     if State.CandyCount >= CONFIG.MAX_CANDY_LIMIT then
                         State.CandyFarmEnabled = false
-                        if CandyFarmToggleUpdate then
-                            CandyFarmToggleUpdate(false)
-                        end
+                        if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
                         TeleportToLobby()
                         break
                     end
                 end
             end
-
             task.wait(CONFIG.CANDY_FARM_INTERVAL)
         end
     end)
@@ -315,33 +290,22 @@ local function StopCandyFarm()
 end
 
 -- ============================================================
--- ANTI-AFK LOGIC
+-- ANTI-AFK
 -- ============================================================
 local function StartAntiAFK()
-    if State.AntiAFKThread then
-        task.cancel(State.AntiAFKThread)
-    end
-
+    if State.AntiAFKThread then task.cancel(State.AntiAFKThread) end
     State.AntiAFKThread = task.spawn(function()
         while State.AntiAFKEnabled and not State.IsClosed do
             task.wait(CONFIG.ANTI_AFK_INTERVAL)
-
-            if State.IsClosed or not State.AntiAFKEnabled then
-                break
-            end
-
+            if State.IsClosed or not State.AntiAFKEnabled then break end
             local character = LocalPlayer.Character
             if character then
                 local rootPart = character:FindFirstChild("HumanoidRootPart")
                 if rootPart then
                     local originalPos = rootPart.CFrame
-                    pcall(function()
-                        rootPart.CFrame = originalPos * CFrame.new(0.1, 0, 0)
-                    end)
+                    pcall(function() rootPart.CFrame = originalPos * CFrame.new(0.1, 0, 0) end)
                     task.wait(0.1)
-                    pcall(function()
-                        rootPart.CFrame = originalPos
-                    end)
+                    pcall(function() rootPart.CFrame = originalPos end)
                 end
             end
         end
@@ -357,13 +321,10 @@ local function StopAntiAFK()
 end
 
 -- ============================================================
--- ROLE DETECTION (shared by ESP and Void Killer)
+-- ROLE DETECTION
 -- ============================================================
 local function GetPlayerRole(player)
-    if player == LocalPlayer then
-        return nil
-    end
-
+    if player == LocalPlayer then return nil end
     local character = player.Character
     if not character then return nil end
 
@@ -375,13 +336,12 @@ local function GetPlayerRole(player)
         if r:find("innocent") then return "Innocent" end
     end
 
-    local hasKnife = false
-    local hasGun = false
+    local hasKnife, hasGun = false, false
     for _, child in ipairs(character:GetChildren()) do
         if child:IsA("Tool") then
-            local toolName = child.Name:lower()
-            if toolName:find("knife") then hasKnife = true end
-            if toolName:find("gun") or toolName:find("revolver") or toolName:find("pistol") then hasGun = true end
+            local n = child.Name:lower()
+            if n:find("knife") then hasKnife = true end
+            if n:find("gun") or n:find("revolver") or n:find("pistol") then hasGun = true end
         end
     end
     if hasKnife then return "Murderer" end
@@ -398,12 +358,11 @@ local function GetPlayerRole(player)
         if t:find("sheriff") or t:find("cop") then return "Sheriff" end
         if t:find("innocent") then return "Innocent" end
     end
-
     return "Innocent"
 end
 
 -- ============================================================
--- ROLE ESP LOGIC
+-- ESP
 -- ============================================================
 local function ClearAllHighlights()
     for player, hl in pairs(State.ESPHighlights) do
@@ -414,14 +373,12 @@ end
 
 local function UpdateESP()
     if State.IsClosed or not State.ESPEnabled then return end
-
     for player, hl in pairs(State.ESPHighlights) do
         if not player.Parent or not player.Character then
             pcall(function() hl:Destroy() end)
             State.ESPHighlights[player] = nil
         end
     end
-
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local role = GetPlayerRole(player)
@@ -455,9 +412,7 @@ local function UpdateESP()
 end
 
 local function StartESP()
-    if State.ESPThread then
-        task.cancel(State.ESPThread)
-    end
+    if State.ESPThread then task.cancel(State.ESPThread) end
     State.ESPThread = task.spawn(function()
         while State.ESPEnabled and not State.IsClosed do
             UpdateESP()
@@ -476,146 +431,107 @@ local function StopESP()
 end
 
 -- ============================================================
--- VOID KILLER LOGIC
+-- TP TO MURDERER (One-shot button action)
 -- ============================================================
-local function ThrowPlayerToVoid(targetPlayer)
-    if not targetPlayer or not targetPlayer.Character then return false end
-    local character = targetPlayer.Character
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return false end
+local function TeleportToMurderer()
+    local localChar = LocalPlayer.Character
+    if not localChar then return end
+    local localRoot = localChar:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return end
 
-    -- Force humanoid to keep the character alive briefly so it actually falls,
-    -- then teleport far below the map so the void kills it instantly.
-    pcall(function()
-        humanoid.Health = 0
-    end)
-
-    -- Also physically move the character to the void position (works in many cases)
-    pcall(function()
-        character:PivotTo(CFrame.new(CONFIG.VOID_POSITION))
-    end)
-
-    -- Ensure any HumanoidRootPart velocity is zeroed so gravity doesn't interfere
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if rootPart then
-        pcall(function()
-            rootPart.AssemblyLinearVelocity = Vector3.zero
-            rootPart.AssemblyAngularVelocity = Vector3.zero
-        end)
-    end
-
-    return true
-end
-
-local function StartVoidKiller()
-    if State.VoidKillerThread then
-        task.cancel(State.VoidKillerThread)
-    end
-
-    State.VoidKillerThread = task.spawn(function()
-        -- One-shot: find murderer and throw to void
-        local murdererPlayer = nil
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local role = GetPlayerRole(player)
-                if role == "Murderer" then
-                    murdererPlayer = player
-                    break
-                end
+    -- Find murderer
+    local murdererPlayer = nil
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local role = GetPlayerRole(player)
+            if role == "Murderer" then
+                murdererPlayer = player
+                break
             end
         end
-
-        if murdererPlayer then
-            ThrowPlayerToVoid(murdererPlayer)
-            print("[MM2 Automation] Murderer " .. murdererPlayer.Name .. " thrown into the void.")
-        else
-            print("[MM2 Automation] No murderer found to throw into the void.")
-        end
-
-        -- Auto-disable toggle after one-shot
-        State.VoidKillerEnabled = false
-        if VoidKillerToggleUpdate then
-            VoidKillerToggleUpdate(false)
-        end
-        State.VoidKillerThread = nil
-    end)
-end
-
-local function StopVoidKiller()
-    State.VoidKillerEnabled = false
-    if State.VoidKillerThread then
-        task.cancel(State.VoidKillerThread)
-        State.VoidKillerThread = nil
     end
+
+    if not murdererPlayer then
+        print("[MM2] Murderer not found.")
+        return
+    end
+
+    local murdererChar = murdererPlayer.Character
+    local murdererRoot = murdererChar and murdererChar:FindFirstChild("HumanoidRootPart")
+    if not murdererRoot then
+        print("[MM2] Murderer has no HumanoidRootPart.")
+        return
+    end
+
+    -- Teleport LOCAL player to murderer (client-side only, but works for you)
+    pcall(function()
+        localChar:PivotTo(murdererRoot.CFrame * CFrame.new(0, 0, -3))
+    end)
+    print("[MM2] Teleported to murderer: " .. murdererPlayer.Name)
 end
 
 -- ============================================================
--- BUILD GUI (Toggles)
+-- BUILD GUI
 -- ============================================================
 local CandyFarmToggleUpdate
-local VoidKillerToggleUpdate
 
 local CandyFarmFrame, candyUpdater = CreateToggle(
-    ContentFrame,
-    0,
-    "🍬 Candy Farm",
-    false,
+    ContentFrame, 0, "🍬 Candy Farm", false,
     function(value)
         State.CandyFarmEnabled = value
-        if value then
-            StartCandyFarm()
-        else
-            StopCandyFarm()
-        end
+        if value then StartCandyFarm() else StopCandyFarm() end
     end
 )
 CandyFarmToggleUpdate = candyUpdater
 
 local AntiAFKFrame, antiAFKUpdater = CreateToggle(
-    ContentFrame,
-    60,
-    "🛡️ Anti-AFK",
-    false,
+    ContentFrame, 60, "🛡️ Anti-AFK", false,
     function(value)
         State.AntiAFKEnabled = value
-        if value then
-            StartAntiAFK()
-        else
-            StopAntiAFK()
-        end
+        if value then StartAntiAFK() else StopAntiAFK() end
     end
 )
 
 local ESPFrame, espUpdater = CreateToggle(
-    ContentFrame,
-    120,
-    "👁️ Role ESP",
-    false,
+    ContentFrame, 120, "👁️ Role ESP", false,
     function(value)
         State.ESPEnabled = value
-        if value then
-            StartESP()
-        else
-            StopESP()
-        end
+        if value then StartESP() else StopESP() end
     end
 )
 
-local VoidKillerFrame, voidKillerUpdater = CreateToggle(
-    ContentFrame,
-    180,
-    "☠️ Выкинуть убийцу",
-    false,
-    function(value)
-        State.VoidKillerEnabled = value
-        if value then
-            StartVoidKiller()
-        else
-            StopVoidKiller()
-        end
-    end
-)
-VoidKillerToggleUpdate = voidKillerUpdater
+-- ============================================================
+-- TP TO MURDERER BUTTON (One-shot, not a toggle)
+-- ============================================================
+local TPButtonFrame = Instance.new("Frame")
+TPButtonFrame.Size = UDim2.new(1, 0, 0, 45)
+TPButtonFrame.Position = UDim2.new(0, 0, 0, 180)
+TPButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
+TPButtonFrame.BorderSizePixel = 0
+TPButtonFrame.Parent = ContentFrame
+
+local TPButtonCorner = Instance.new("UICorner")
+TPButtonCorner.CornerRadius = UDim.new(0, 6)
+TPButtonCorner.Parent = TPButtonFrame
+
+local TPButton = Instance.new("TextButton")
+TPButton.Size = UDim2.new(1, -16, 1, -10)
+TPButton.Position = UDim2.new(0, 8, 0, 5)
+TPButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+TPButton.Text = "🎯 TP к убийце (одноразово)"
+TPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+TPButton.TextSize = 13
+TPButton.Font = Enum.Font.GothamBold
+TPButton.Parent = TPButtonFrame
+
+local TPButtonCorner2 = Instance.new("UICorner")
+TPButtonCorner2.CornerRadius = UDim.new(0, 6)
+TPButtonCorner2.Parent = TPButton
+
+TPButton.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    TeleportToMurderer()
+end)
 
 -- ESP Legend
 local LegendFrame = Instance.new("Frame")
@@ -661,7 +577,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 40)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: 3.0s/teleport, limit " .. CONFIG.MAX_CANDY_LIMIT .. ".\nVoid Killer: one-shot, auto-disables."
+InfoLabel.Text = "Candy Farm: 3.0s/teleport, limit " .. CONFIG.MAX_CANDY_LIMIT .. ".\nTP button: one-shot, teleports YOU to murderer."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -670,7 +586,7 @@ InfoLabel.TextWrapped = true
 InfoLabel.Parent = ContentFrame
 
 -- ============================================================
--- MINIMIZE ICON (Small separate icon)
+-- MINIMIZE ICON
 -- ============================================================
 local MiniIcon = Instance.new("TextButton")
 MiniIcon.Name = "MiniIcon"
@@ -695,7 +611,7 @@ MiniStroke.Thickness = 2
 MiniStroke.Parent = MiniIcon
 
 -- ============================================================
--- BUTTON LOGIC: MINIMIZE / RESTORE / CLOSE
+-- BUTTON LOGIC
 -- ============================================================
 MinButton.MouseButton1Click:Connect(function()
     if State.IsClosed then return end
@@ -713,26 +629,18 @@ end)
 
 CloseButton.MouseButton1Click:Connect(function()
     State.IsClosed = true
-
     StopCandyFarm()
     StopAntiAFK()
     StopESP()
-    StopVoidKiller()
-
     if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
     if antiAFKUpdater then antiAFKUpdater(false) end
     if espUpdater then espUpdater(false) end
-    if voidKillerUpdater then voidKillerUpdater(false) end
-
     for _, conn in ipairs(State.Connections) do
         pcall(function() conn:Disconnect() end)
     end
     State.Connections = {}
-
     ClearAllHighlights()
-
     ScreenGui:Destroy()
-
     local character = LocalPlayer.Character
     if character then
         local rootPart = character:FindFirstChild("HumanoidRootPart")
@@ -745,9 +653,6 @@ CloseButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- ============================================================
--- CLEANUP ON CHARACTER REMOVAL (Safety)
--- ============================================================
 LocalPlayer.CharacterRemoving:Connect(function()
     if State.CandyFarmThread then
         task.cancel(State.CandyFarmThread)
@@ -755,7 +660,4 @@ LocalPlayer.CharacterRemoving:Connect(function()
     end
 end)
 
--- ============================================================
--- SCRIPT INITIALIZATION
--- ============================================================
-print("[MM2 Automation] Script loaded. GUI ready. (Teleport interval: 3.0s, Void Killer enabled)")
+print("[MM2 Automation] Script loaded. (TP to Murderer button added)")
