@@ -21,7 +21,7 @@ local CONFIG = {
     MAX_CANDY_LIMIT = 200,
     LOBBY_POSITION = Vector3.new(0, 10, 0),
     ESP_UPDATE_INTERVAL = 0.5,
-    COLLECT_NUDGE_DURATION = 0.15,   -- How long to nudge for contact registration
+    COLLECT_NUDGE_DURATION = 0.15,
 }
 
 local ESP_COLORS = {
@@ -49,11 +49,10 @@ local State = {
 }
 
 -- ============================================================
--- CHARACTER REFRESH (fix: functions survive respawn)
+-- CHARACTER REFRESH
 -- ============================================================
 local function OnCharacterAdded(character)
     State.CurrentCharacter = character
-    -- Do NOT stop threads here. They check State flags, not character refs.
 end
 
 State.CurrentCharacter = LocalPlayer.Character
@@ -223,16 +222,15 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
 end
 
 -- ============================================================
--- CANDY FARM (with contact nudge fix)
+-- CANDY FARM (RANDOM TARGET)
 -- ============================================================
-local function FindNearestCandy()
+local function GetAllCandies()
     local character = State.CurrentCharacter or LocalPlayer.Character
-    if not character then return nil end
+    if not character then return {} end
     local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return nil end
+    if not rootPart then return {} end
 
-    local nearestCandy = nil
-    local shortestDist = CONFIG.CANDY_SEARCH_RADIUS
+    local candies = {}
 
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("BasePart") or obj:IsA("Model") then
@@ -241,15 +239,20 @@ local function FindNearestCandy()
                 local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
                 if part and part.Transparency < 0.5 then
                     local dist = (rootPart.Position - part.Position).Magnitude
-                    if dist < shortestDist then
-                        shortestDist = dist
-                        nearestCandy = part
+                    if dist <= CONFIG.CANDY_SEARCH_RADIUS then
+                        table.insert(candies, part)
                     end
                 end
             end
         end
     end
-    return nearestCandy
+    return candies
+end
+
+local function GetRandomCandy()
+    local candies = GetAllCandies()
+    if #candies == 0 then return nil end
+    return candies[math.random(1, #candies)]
 end
 
 local function TeleportToAndCollect(targetPart)
@@ -258,14 +261,11 @@ local function TeleportToAndCollect(targetPart)
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return false end
 
-    -- Step 1: Teleport slightly above candy
     local success = pcall(function()
         character:PivotTo(CFrame.new(targetPart.Position + Vector3.new(0, 2, 0)))
     end)
     if not success then return false end
 
-    -- Step 2: Force contact registration (fix: no manual movement needed)
-    -- Briefly enable collision on root and nudge down to touch candy
     local originalCollide = rootPart.CanCollide
     rootPart.CanCollide = true
     task.wait(CONFIG.COLLECT_NUDGE_DURATION)
@@ -293,7 +293,7 @@ local function StartCandyFarm()
         while State.CandyFarmEnabled and not State.IsClosed do
             local character = State.CurrentCharacter or LocalPlayer.Character
             if not character then task.wait(1) continue end
-            local candy = FindNearestCandy()
+            local candy = GetRandomCandy()
             if candy then
                 local success = TeleportToAndCollect(candy)
                 if success then
@@ -504,7 +504,7 @@ end
 local CandyFarmToggleUpdate
 
 local CandyFarmFrame, candyUpdater = CreateToggle(
-    ContentFrame, 0, "🍬 Candy Farm", false,
+    ContentFrame, 0, "🍬 Candy Farm (random)", false,
     function(value)
         State.CandyFarmEnabled = value
         if value then StartCandyFarm() else StopCandyFarm() end
@@ -603,7 +603,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 30)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: 2.0s/teleport, survives respawn."
+InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -679,4 +679,4 @@ CloseButton.MouseButton1Click:Connect(function()
     end
 end)
 
-print("[MM2 Automation] Script loaded. (Survives respawn + auto-collect fix)")
+print("[MM2 Automation] Script loaded. (Random candy target)")
