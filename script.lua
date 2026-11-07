@@ -1,5 +1,5 @@
 -- ============================================================
--- MM2 Candy Farm & Anti-AFK & Role ESP & TP to Murderer
+-- MM2 Automation Hub — 4 Tabs (Farm / Visuals / Murderer / Sheriff)
 -- Requirements: Executor with LocalScript execution capability
 -- ============================================================
 
@@ -59,7 +59,7 @@ State.CurrentCharacter = LocalPlayer.Character
 LocalPlayer.CharacterAdded:Connect(OnCharacterAdded)
 
 -- ============================================================
--- GUI (Modern Interface)
+-- GUI ROOT
 -- ============================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MM2_Automation_Hub"
@@ -69,7 +69,7 @@ ScreenGui.Parent = PlayerGui
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 280, 0, 385)
+MainFrame.Size = UDim2.new(0, 300, 0, 400)
 MainFrame.Position = UDim2.new(0, 50, 0, 50)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
@@ -86,6 +86,7 @@ MainStroke.Color = Color3.fromRGB(60, 60, 70)
 MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
+-- Title Bar
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 35)
@@ -135,20 +136,99 @@ CloseButton.TextSize = 16
 CloseButton.Font = Enum.Font.GothamBold
 CloseButton.Parent = TitleBar
 
-local ContentFrame = Instance.new("Frame")
-ContentFrame.Name = "ContentFrame"
-ContentFrame.Size = UDim2.new(1, -20, 1, -50)
-ContentFrame.Position = UDim2.new(0, 10, 0, 45)
-ContentFrame.BackgroundTransparency = 1
-ContentFrame.Parent = MainFrame
+-- ============================================================
+-- TAB BAR
+-- ============================================================
+local TabBar = Instance.new("Frame")
+TabBar.Name = "TabBar"
+TabBar.Size = UDim2.new(1, 0, 0, 32)
+TabBar.Position = UDim2.new(0, 0, 0, 35)
+TabBar.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+TabBar.BorderSizePixel = 0
+TabBar.Parent = MainFrame
+
+local TabBarLayout = Instance.new("UIListLayout")
+TabBarLayout.FillDirection = Enum.FillDirection.Horizontal
+TabBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+TabBarLayout.Parent = TabBar
+
+local Tabs = {} -- [name] = { button = ..., content = ... }
+local ActiveTab = nil
+
+local function SetActiveTab(name)
+    if not Tabs[name] then return end
+    for tabName, tabData in pairs(Tabs) do
+        if tabName == name then
+            tabData.button.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            tabData.button.TextColor3 = Color3.fromRGB(255, 255, 255)
+            tabData.content.Visible = true
+        else
+            tabData.button.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+            tabData.button.TextColor3 = Color3.fromRGB(150, 150, 160)
+            tabData.content.Visible = false
+        end
+    end
+    ActiveTab = name
+end
+
+local function CreateTab(name, order)
+    local button = Instance.new("TextButton")
+    button.Name = name .. "Tab"
+    button.Size = UDim2.new(0, 75, 1, 0)
+    button.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+    button.BorderSizePixel = 0
+    button.Text = name
+    button.TextColor3 = Color3.fromRGB(150, 150, 160)
+    button.TextSize = 12
+    button.Font = Enum.Font.GothamBold
+    button.LayoutOrder = order
+    button.Parent = TabBar
+
+    local content = Instance.new("Frame")
+    content.Name = name .. "Content"
+    content.Size = UDim2.new(1, -20, 1, -85)
+    content.Position = UDim2.new(0, 10, 0, 75)
+    content.BackgroundTransparency = 1
+    content.Visible = false
+    content.Parent = MainFrame
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, 0, 1, 0)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 4
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 90)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.Parent = content
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 8)
+    layout.Parent = scroll
+
+    Tabs[name] = { button = button, content = content, scroll = scroll }
+
+    button.MouseButton1Click:Connect(function()
+        if State.IsClosed then return end
+        SetActiveTab(name)
+    end)
+
+    return scroll
+end
+
+-- Create 4 tabs
+local FarmTab = CreateTab("Farm", 1)
+local VisualsTab = CreateTab("Visuals", 2)
+local MurdererTab = CreateTab("Murderer", 3)
+local SheriffTab = CreateTab("Sheriff", 4)
 
 -- ============================================================
 -- TOGGLE HELPER
 -- ============================================================
-local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
+local function CreateToggle(parent, labelText, initialValue, callback)
     local ToggleFrame = Instance.new("Frame")
-    ToggleFrame.Size = UDim2.new(1, 0, 0, 45)
-    ToggleFrame.Position = UDim2.new(0, 0, 0, yOffset)
+    ToggleFrame.Size = UDim2.new(1, -8, 0, 45)
     ToggleFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
     ToggleFrame.BorderSizePixel = 0
     ToggleFrame.Parent = parent
@@ -222,6 +302,27 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
 end
 
 -- ============================================================
+-- PLACEHOLDER HELPER
+-- ============================================================
+local function CreatePlaceholder(parent, text)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -8, 0, 45)
+    lbl.BackgroundColor3 = Color3.fromRGB(40, 40, 46)
+    lbl.BorderSizePixel = 0
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(110, 110, 120)
+    lbl.TextSize = 12
+    lbl.Font = Enum.Font.GothamItalic
+    lbl.Parent = parent
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = lbl
+
+    return lbl
+end
+
+-- ============================================================
 -- CANDY FARM (RANDOM TARGET)
 -- ============================================================
 local function GetAllCandies()
@@ -231,7 +332,6 @@ local function GetAllCandies()
     if not rootPart then return {} end
 
     local candies = {}
-
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("BasePart") or obj:IsA("Model") then
             local name = obj.Name:lower()
@@ -499,73 +599,48 @@ local function TeleportToMurderer()
 end
 
 -- ============================================================
--- BUILD GUI
+-- BUILD FARM TAB
 -- ============================================================
 local CandyFarmToggleUpdate
 
-local CandyFarmFrame, candyUpdater = CreateToggle(
-    ContentFrame, 0, "🍬 Candy Farm (random)", false,
+local CandyFarmToggle, candyUpdater = CreateToggle(
+    FarmTab, "🍬 Candy Auto Farm", false,
     function(value)
         State.CandyFarmEnabled = value
         if value then StartCandyFarm() else StopCandyFarm() end
     end
 )
 CandyFarmToggleUpdate = candyUpdater
+CandyFarmToggle.LayoutOrder = 1
 
-local AntiAFKFrame, antiAFKUpdater = CreateToggle(
-    ContentFrame, 60, "🛡️ Anti-AFK", false,
+local AntiAFKToggle, antiAFKUpdater = CreateToggle(
+    FarmTab, "🛡️ Anti-AFK", false,
     function(value)
         State.AntiAFKEnabled = value
         if value then StartAntiAFK() else StopAntiAFK() end
     end
 )
+AntiAFKToggle.LayoutOrder = 2
 
-local ESPFrame, espUpdater = CreateToggle(
-    ContentFrame, 120, "👁️ Role ESP", false,
+-- ============================================================
+-- BUILD VISUALS TAB
+-- ============================================================
+local ESPToggle, espUpdater = CreateToggle(
+    VisualsTab, "👁️ Role ESP", false,
     function(value)
         State.ESPEnabled = value
         if value then StartESP() else StopESP() end
     end
 )
-
--- TP TO MURDERER BUTTON (One-shot)
-local TPButtonFrame = Instance.new("Frame")
-TPButtonFrame.Size = UDim2.new(1, 0, 0, 45)
-TPButtonFrame.Position = UDim2.new(0, 0, 0, 180)
-TPButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-TPButtonFrame.BorderSizePixel = 0
-TPButtonFrame.Parent = ContentFrame
-
-local TPButtonCorner = Instance.new("UICorner")
-TPButtonCorner.CornerRadius = UDim.new(0, 6)
-TPButtonCorner.Parent = TPButtonFrame
-
-local TPButton = Instance.new("TextButton")
-TPButton.Size = UDim2.new(1, -16, 1, -10)
-TPButton.Position = UDim2.new(0, 8, 0, 5)
-TPButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-TPButton.Text = "🎯 TP к убийце (одноразово)"
-TPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-TPButton.TextSize = 13
-TPButton.Font = Enum.Font.GothamBold
-TPButton.Parent = TPButtonFrame
-
-local TPButtonCorner2 = Instance.new("UICorner")
-TPButtonCorner2.CornerRadius = UDim.new(0, 6)
-TPButtonCorner2.Parent = TPButton
-
-TPButton.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    TeleportToMurderer()
-end)
+ESPToggle.LayoutOrder = 1
 
 -- ESP Legend
 local LegendFrame = Instance.new("Frame")
-LegendFrame.Size = UDim2.new(1, 0, 0, 55)
-LegendFrame.Position = UDim2.new(0, 0, 0, 235)
+LegendFrame.Size = UDim2.new(1, -8, 0, 75)
 LegendFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 LegendFrame.BorderSizePixel = 0
-LegendFrame.Parent = ContentFrame
+LegendFrame.LayoutOrder = 2
+LegendFrame.Parent = VisualsTab
 
 local LegendCorner = Instance.new("UICorner")
 LegendCorner.CornerRadius = UDim.new(0, 6)
@@ -594,22 +669,51 @@ local function MakeLegendRow(parent, y, color, text)
     lbl.Parent = parent
 end
 
-MakeLegendRow(LegendFrame, 6, ESP_COLORS.Murderer, "Murderer")
-MakeLegendRow(LegendFrame, 21, ESP_COLORS.Sheriff, "Sheriff")
-MakeLegendRow(LegendFrame, 36, ESP_COLORS.Innocent, "Innocent")
+MakeLegendRow(LegendFrame, 8, ESP_COLORS.Murderer, "Murderer")
+MakeLegendRow(LegendFrame, 28, ESP_COLORS.Sheriff, "Sheriff")
+MakeLegendRow(LegendFrame, 48, ESP_COLORS.Innocent, "Innocent")
 
--- Info Label
-local InfoLabel = Instance.new("TextLabel")
-InfoLabel.Size = UDim2.new(1, 0, 0, 30)
-InfoLabel.Position = UDim2.new(0, 0, 0, 300)
-InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport."
-InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
-InfoLabel.TextSize = 11
-InfoLabel.Font = Enum.Font.Gotham
-InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
-InfoLabel.TextWrapped = true
-InfoLabel.Parent = ContentFrame
+-- ============================================================
+-- BUILD MURDERER TAB
+-- ============================================================
+local TPButtonFrame = Instance.new("Frame")
+TPButtonFrame.Size = UDim2.new(1, -8, 0, 45)
+TPButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
+TPButtonFrame.BorderSizePixel = 0
+TPButtonFrame.LayoutOrder = 1
+TPButtonFrame.Parent = MurdererTab
+
+local TPButtonCorner = Instance.new("UICorner")
+TPButtonCorner.CornerRadius = UDim.new(0, 6)
+TPButtonCorner.Parent = TPButtonFrame
+
+local TPButton = Instance.new("TextButton")
+TPButton.Size = UDim2.new(1, -16, 1, -10)
+TPButton.Position = UDim2.new(0, 8, 0, 5)
+TPButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+TPButton.Text = "🎯 TP к убийце (одноразово)"
+TPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+TPButton.TextSize = 13
+TPButton.Font = Enum.Font.GothamBold
+TPButton.Parent = TPButtonFrame
+
+local TPButtonCorner2 = Instance.new("UICorner")
+TPButtonCorner2.CornerRadius = UDim.new(0, 6)
+TPButtonCorner2.Parent = TPButton
+
+TPButton.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    TeleportToMurderer()
+end)
+
+local MurdererPlaceholder = CreatePlaceholder(MurdererTab, "Скоро... (функции для убийцы)")
+MurdererPlaceholder.LayoutOrder = 2
+
+-- ============================================================
+-- BUILD SHERIFF TAB
+-- ============================================================
+local SheriffPlaceholder = CreatePlaceholder(SheriffTab, "Скоро... (функции для шерифа)")
+SheriffPlaceholder.LayoutOrder = 1
 
 -- ============================================================
 -- MINIMIZE ICON
@@ -679,4 +783,7 @@ CloseButton.MouseButton1Click:Connect(function()
     end
 end)
 
-print("[MM2 Automation] Script loaded. (Random candy target)")
+-- Activate Farm tab by default
+SetActiveTab("Farm")
+
+print("[MM2 Automation] Script loaded. 4 tabs ready.")
