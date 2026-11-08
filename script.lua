@@ -1,6 +1,6 @@
 -- ============================================================
 -- MM2 Automation Hub — 4 Tabs (Farm / Visuals / Murderer / Sheriff)
--- ESP checks Backpack + Character, drag & min/close fixed
+-- ESP checks Backpack + Character, drag & min/close fixed + hover
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -89,7 +89,7 @@ MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
 -- ============================================================
--- TITLE BAR (drag handle only — buttons are outside it)
+-- TITLE BAR (drag on empty area, buttons are siblings inside)
 -- ============================================================
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
@@ -112,8 +112,9 @@ TitleBarFix.BorderSizePixel = 0
 TitleBarFix.ZIndex = 10
 TitleBarFix.Parent = TitleBar
 
+-- Title Label
 local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -70, 1, 0)
+TitleLabel.Size = UDim2.new(1, -80, 1, 0)
 TitleLabel.Position = UDim2.new(0, 10, 0, 0)
 TitleLabel.BackgroundTransparency = 1
 TitleLabel.Text = "MM2 Automation"
@@ -125,13 +126,24 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- DRAG (title bar only, no global input hooks)
+-- DRAG AREA (invisible, only covers left part of title bar,
+-- so it doesn't overlap buttons)
 -- ============================================================
+local DragArea = Instance.new("TextButton")
+DragArea.Name = "DragArea"
+DragArea.Size = UDim2.new(1, -80, 1, 0) -- leave 80px on right for buttons
+DragArea.Position = UDim2.new(0, 0, 0, 0)
+DragArea.BackgroundTransparency = 1
+DragArea.Text = ""
+DragArea.AutoButtonColor = false
+DragArea.ZIndex = 12
+DragArea.Parent = TitleBar
+
 local dragging = false
 local dragStart = nil
 local startPos = nil
 
-TitleBar.InputBegan:Connect(function(input)
+DragArea.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
@@ -140,7 +152,7 @@ TitleBar.InputBegan:Connect(function(input)
     end
 end)
 
-TitleBar.InputChanged:Connect(function(input)
+DragArea.InputChanged:Connect(function(input)
     if not dragging then return end
     if input.UserInputType == Enum.UserInputType.MouseMovement
     or input.UserInputType == Enum.UserInputType.Touch then
@@ -152,7 +164,7 @@ TitleBar.InputChanged:Connect(function(input)
     end
 end)
 
-TitleBar.InputEnded:Connect(function(input)
+DragArea.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
@@ -160,12 +172,13 @@ TitleBar.InputEnded:Connect(function(input)
 end)
 
 -- ============================================================
--- MIN/CLOSE BUTTONS (outside TitleBar, on top layer)
+-- MIN/CLOSE BUTTONS (inside TitleBar, as siblings of DragArea)
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
 MinButton.Size = UDim2.new(0, 30, 0, 30)
 MinButton.Position = UDim2.new(1, -65, 0, 2)
+MinButton.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 MinButton.BackgroundTransparency = 1
 MinButton.Text = "−"
 MinButton.TextColor3 = Color3.fromRGB(180, 180, 190)
@@ -173,13 +186,18 @@ MinButton.TextSize = 20
 MinButton.Font = Enum.Font.GothamBold
 MinButton.AutoButtonColor = false
 MinButton.Active = true
-MinButton.ZIndex = 100
-MinButton.Parent = MainFrame
+MinButton.ZIndex = 20
+MinButton.Parent = TitleBar
+
+local MinButtonCorner = Instance.new("UICorner")
+MinButtonCorner.CornerRadius = UDim.new(0, 4)
+MinButtonCorner.Parent = MinButton
 
 local CloseButton = Instance.new("TextButton")
 CloseButton.Name = "CloseButton"
 CloseButton.Size = UDim2.new(0, 30, 0, 30)
 CloseButton.Position = UDim2.new(1, -35, 0, 2)
+CloseButton.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 CloseButton.BackgroundTransparency = 1
 CloseButton.Text = "X"
 CloseButton.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -187,8 +205,29 @@ CloseButton.TextSize = 16
 CloseButton.Font = Enum.Font.GothamBold
 CloseButton.AutoButtonColor = false
 CloseButton.Active = true
-CloseButton.ZIndex = 100
-CloseButton.Parent = MainFrame
+CloseButton.ZIndex = 20
+CloseButton.Parent = TitleBar
+
+local CloseButtonCorner = Instance.new("UICorner")
+CloseButtonCorner.CornerRadius = UDim.new(0, 4)
+CloseButtonCorner.Parent = CloseButton
+
+-- ============================================================
+-- HOVER EFFECT for Min/Close (same darkening as tabs)
+-- ============================================================
+local function addHover(button, hoverColor, normalTransparency)
+    button.MouseEnter:Connect(function()
+        button.BackgroundTransparency = 0
+        button.BackgroundColor3 = hoverColor
+    end)
+    button.MouseLeave:Connect(function()
+        button.BackgroundTransparency = normalTransparency
+        button.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    end)
+end
+
+addHover(MinButton, Color3.fromRGB(60, 60, 70), 1)
+addHover(CloseButton, Color3.fromRGB(90, 50, 50), 1)
 
 -- ============================================================
 -- TAB BAR
@@ -239,6 +278,18 @@ local function CreateTab(name, order)
     button.LayoutOrder = order
     button.ZIndex = 6
     button.Parent = TabBar
+
+    -- Hover
+    button.MouseEnter:Connect(function()
+        if ActiveTab ~= name then
+            button.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
+        end
+    end)
+    button.MouseLeave:Connect(function()
+        if ActiveTab ~= name then
+            button.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+        end
+    end)
 
     local content = Instance.new("Frame")
     content.Name = name .. "Content"
@@ -810,46 +861,4 @@ MiniStroke.Parent = MiniIcon
 -- ============================================================
 -- BUTTON LOGIC
 -- ============================================================
-MinButton.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    State.IsMinimized = true
-    MainFrame.Visible = false
-    MiniIcon.Visible = true
-end)
-
-MiniIcon.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    State.IsMinimized = false
-    MainFrame.Visible = true
-    MiniIcon.Visible = false
-end)
-
-CloseButton.MouseButton1Click:Connect(function()
-    State.IsClosed = true
-    StopCandyFarm()
-    StopAntiAFK()
-    StopESP()
-    if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
-    if antiAFKUpdater then antiAFKUpdater(false) end
-    if espUpdater then espUpdater(false) end
-    for _, conn in ipairs(State.Connections) do
-        pcall(function() conn:Disconnect() end)
-    end
-    State.Connections = {}
-    ClearAllHighlights()
-    ScreenGui:Destroy()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if character then
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if rootPart then
-            pcall(function()
-                rootPart.AssemblyLinearVelocity = Vector3.zero
-                rootPart.AssemblyAngularVelocity = Vector3.zero
-            end)
-        end
-    end
-end)
-
-SetActiveTab("Farm")
-
-print("[MM2 Automation] Script loaded. Drag + Min/Close + ESP(Backpack) fixed.")
+MinButton.MouseButton1Click:Connect
