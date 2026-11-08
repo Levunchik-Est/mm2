@@ -121,6 +121,50 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
+-- DRAG ZONE (separate Frame covering only left part of title bar)
+-- ============================================================
+local DragZone = Instance.new("Frame")
+DragZone.Name = "DragZone"
+DragZone.Size = UDim2.new(1, -80, 1, 0)
+DragZone.Position = UDim2.new(0, 0, 0, 0)
+DragZone.BackgroundTransparency = 1
+DragZone.Active = true
+DragZone.ZIndex = 12
+DragZone.Parent = TitleBar
+
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+DragZone.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+    end
+end)
+
+DragZone.InputChanged:Connect(function(input)
+    if not dragging then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+DragZone.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- ============================================================
 -- MIN / CLOSE BUTTONS (visible, AutoButtonColor for hover)
 -- ============================================================
 local MinButton = Instance.new("TextButton")
