@@ -125,46 +125,7 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- DRAG (direct on TitleBar, but ignore clicks in button zone)
--- ============================================================
-local dragging = false
-local dragStart = nil
-local startPos = nil
-local BUTTON_ZONE_START = 1 - (80 / 300) -- buttons occupy rightmost ~80px
-
-TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        -- Ignore clicks on the right side where buttons are
-        local relX = (input.Position.X - TitleBar.AbsolutePosition.X) / TitleBar.AbsoluteSize.X
-        if relX >= BUTTON_ZONE_START then return end
-        dragging = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
-    end
-end)
-
-TitleBar.InputChanged:Connect(function(input)
-    if not dragging then return end
-    if input.UserInputType == Enum.UserInputType.MouseMovement
-    or input.UserInputType == Enum.UserInputType.Touch then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-TitleBar.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
--- ============================================================
--- MIN/CLOSE BUTTONS (visible backgrounds, AutoButtonColor on)
+-- MIN/CLOSE BUTTONS (visible background, AutoButtonColor, no DragArea over them)
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
@@ -203,6 +164,44 @@ CloseButton.Parent = TitleBar
 local CloseButtonCorner = Instance.new("UICorner")
 CloseButtonCorner.CornerRadius = UDim.new(0, 4)
 CloseButtonCorner.Parent = CloseButton
+
+-- ============================================================
+-- DRAG (on TitleBar, ignore clicks in right button zone)
+-- ============================================================
+local dragging = false
+local dragStart = nil
+local startPos = nil
+local BUTTON_ZONE_START = 1 - (80 / 300) -- buttons occupy rightmost ~80px
+
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        local relX = (input.Position.X - TitleBar.AbsolutePosition.X) / TitleBar.AbsoluteSize.X
+        if relX >= BUTTON_ZONE_START then return end
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+    end
+end)
+
+TitleBar.InputChanged:Connect(function(input)
+    if not dragging then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
 
 -- ============================================================
 -- TAB BAR
@@ -812,4 +811,56 @@ SheriffPlaceholder.LayoutOrder = 1
 local MiniIcon = Instance.new("TextButton")
 MiniIcon.Name = "MiniIcon"
 MiniIcon.Size = UDim2.new(0, 40, 0, 40)
-MiniIcon.Position = UDim2.new(0,
+MiniIcon.Position = UDim2.new(0, 50, 0, 50)
+MiniIcon.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+MiniIcon.BorderSizePixel = 0
+MiniIcon.Text = "M"
+MiniIcon.TextColor3 = Color3.fromRGB(220, 220, 230)
+MiniIcon.TextSize = 16
+MiniIcon.Font = Enum.Font.GothamBold
+MiniIcon.Visible = false
+MiniIcon.ZIndex = 20
+MiniIcon.Parent = ScreenGui
+
+local MiniCorner = Instance.new("UICorner")
+MiniCorner.CornerRadius = UDim.new(0, 8)
+MiniCorner.Parent = MiniIcon
+
+local MiniStroke = Instance.new("UIStroke")
+MiniStroke.Color = Color3.fromRGB(80, 180, 100)
+MiniStroke.Thickness = 2
+MiniStroke.Parent = MiniIcon
+
+-- ============================================================
+-- BUTTON LOGIC
+-- ============================================================
+MinButton.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    State.IsMinimized = true
+    MainFrame.Visible = false
+    MiniIcon.Visible = true
+end)
+
+MiniIcon.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    State.IsMinimized = false
+    MainFrame.Visible = true
+    MiniIcon.Visible = false
+end)
+
+CloseButton.MouseButton1Click:Connect(function()
+    State.IsClosed = true
+    StopCandyFarm()
+    StopAntiAFK()
+    StopESP()
+    if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
+    if antiAFKUpdater then antiAFKUpdater(false) end
+    if espUpdater then espUpdater(false) end
+    for _, conn in ipairs(State.Connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    State.Connections = {}
+    ClearAllHighlights()
+    ScreenGui:Destroy()
+    local character = State.CurrentCharacter or LocalPlayer.Character
+    if character then
