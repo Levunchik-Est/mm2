@@ -206,6 +206,38 @@ CloseCorner.CornerRadius = UDim.new(0, 4)
 CloseCorner.Parent = CloseButton
 
 -- ============================================================
+-- MIN / CLOSE BUTTON HANDLERS (this was missing!)
+-- ============================================================
+MinButton.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    State.IsMinimized = true
+    MainFrame.Visible = false
+    MiniIcon.Visible = true
+end)
+
+CloseButton.MouseButton1Click:Connect(function()
+    State.IsClosed = true
+    StopCandyFarm()
+    StopAntiAFK()
+    StopESP()
+    if candyUpdater then candyUpdater(false) end
+    if antiAFKUpdater then antiAFKUpdater(false) end
+    if espUpdater then espUpdater(false) end
+    ClearAllHighlights()
+    ScreenGui:Destroy()
+    local character = State.CurrentCharacter or LocalPlayer.Character
+    if character then
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+    end
+end)
+
+-- ============================================================
 -- DRAG (only left zone of title bar; buttons excluded)
 -- ============================================================
 local dragging = false
