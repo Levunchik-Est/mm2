@@ -1,6 +1,6 @@
 -- ============================================================
--- MM2 Automation Hub — 4 Tabs (Farm / Visuals / Murderer / Sheriff)
--- ESP checks Backpack + Character, drag & min/close FIXED
+-- MM2 Automation Hub (final clean build)
+-- Tabs: Farm / Visuals / Murderer / Sheriff
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -13,7 +13,7 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- ============================================================
--- CONFIGURATION
+-- CONFIG
 -- ============================================================
 local CONFIG = {
     CANDY_FARM_INTERVAL = 2.0,
@@ -45,19 +45,16 @@ local State = {
     ESPThread = nil,
     CandyCount = 0,
     ESPHighlights = {},
-    Connections = {},
     CurrentCharacter = nil,
 }
 
 -- ============================================================
 -- CHARACTER REFRESH
 -- ============================================================
-local function OnCharacterAdded(character)
-    State.CurrentCharacter = character
-end
-
 State.CurrentCharacter = LocalPlayer.Character
-LocalPlayer.CharacterAdded:Connect(OnCharacterAdded)
+LocalPlayer.CharacterAdded:Connect(function(character)
+    State.CurrentCharacter = character
+end)
 
 -- ============================================================
 -- GUI ROOT
@@ -75,7 +72,6 @@ MainFrame.Position = UDim2.new(0, 50, 0, 50)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
-MainFrame.Draggable = false
 MainFrame.ZIndex = 1
 MainFrame.Parent = ScreenGui
 
@@ -104,13 +100,13 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 8)
 TitleCorner.Parent = TitleBar
 
-local TitleBarFix = Instance.new("Frame")
-TitleBarFix.Size = UDim2.new(1, 0, 0, 10)
-TitleBarFix.Position = UDim2.new(0, 0, 1, -10)
-TitleBarFix.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-TitleBarFix.BorderSizePixel = 0
-TitleBarFix.ZIndex = 10
-TitleBarFix.Parent = TitleBar
+local TitleFix = Instance.new("Frame")
+TitleFix.Size = UDim2.new(1, 0, 0, 10)
+TitleFix.Position = UDim2.new(0, 0, 1, -10)
+TitleFix.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+TitleFix.BorderSizePixel = 0
+TitleFix.ZIndex = 10
+TitleFix.Parent = TitleBar
 
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -80, 1, 0)
@@ -125,7 +121,7 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- MIN/CLOSE BUTTONS (visible background, AutoButtonColor, no DragArea over them)
+-- MIN / CLOSE BUTTONS (visible, AutoButtonColor for hover)
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
@@ -142,9 +138,9 @@ MinButton.Active = true
 MinButton.ZIndex = 100
 MinButton.Parent = TitleBar
 
-local MinButtonCorner = Instance.new("UICorner")
-MinButtonCorner.CornerRadius = UDim.new(0, 4)
-MinButtonCorner.Parent = MinButton
+local MinCorner = Instance.new("UICorner")
+MinCorner.CornerRadius = UDim.new(0, 4)
+MinCorner.Parent = MinButton
 
 local CloseButton = Instance.new("TextButton")
 CloseButton.Name = "CloseButton"
@@ -161,17 +157,17 @@ CloseButton.Active = true
 CloseButton.ZIndex = 100
 CloseButton.Parent = TitleBar
 
-local CloseButtonCorner = Instance.new("UICorner")
-CloseButtonCorner.CornerRadius = UDim.new(0, 4)
-CloseButtonCorner.Parent = CloseButton
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 4)
+CloseCorner.Parent = CloseButton
 
 -- ============================================================
--- DRAG (on TitleBar, ignore clicks in right button zone)
+-- DRAG (only left zone of title bar; buttons excluded)
 -- ============================================================
 local dragging = false
 local dragStart = nil
 local startPos = nil
-local BUTTON_ZONE_START = 1 - (80 / 300) -- buttons occupy rightmost ~80px
+local BUTTON_ZONE_START = 1 - (80 / 300)
 
 TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -215,10 +211,10 @@ TabBar.BorderSizePixel = 0
 TabBar.ZIndex = 5
 TabBar.Parent = MainFrame
 
-local TabBarLayout = Instance.new("UIListLayout")
-TabBarLayout.FillDirection = Enum.FillDirection.Horizontal
-TabBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
-TabBarLayout.Parent = TabBar
+local TabLayout = Instance.new("UIListLayout")
+TabLayout.FillDirection = Enum.FillDirection.Horizontal
+TabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+TabLayout.Parent = TabBar
 
 local Tabs = {}
 local ActiveTab = nil
@@ -270,7 +266,6 @@ local function CreateTab(name, order)
     content.Position = UDim2.new(0, 10, 0, 75)
     content.BackgroundTransparency = 1
     content.Visible = false
-    content.ClipsDescendants = false
     content.ZIndex = 2
     content.Parent = MainFrame
 
@@ -305,67 +300,67 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     ToggleFrame.ZIndex = 4
     ToggleFrame.Parent = parent
 
-    local ToggleCorner = Instance.new("UICorner")
-    ToggleCorner.CornerRadius = UDim.new(0, 6)
-    ToggleCorner.Parent = ToggleFrame
+    local c1 = Instance.new("UICorner")
+    c1.CornerRadius = UDim.new(0, 6)
+    c1.Parent = ToggleFrame
 
-    local Label = Instance.new("TextLabel")
-    Label.Size = UDim2.new(1, -70, 1, 0)
-    Label.Position = UDim2.new(0, 12, 0, 0)
-    Label.BackgroundTransparency = 1
-    Label.Text = labelText
-    Label.TextColor3 = Color3.fromRGB(200, 200, 210)
-    Label.TextSize = 13
-    Label.Font = Enum.Font.Gotham
-    Label.TextXAlignment = Enum.TextXAlignment.Left
-    Label.ZIndex = 5
-    Label.Parent = ToggleFrame
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -70, 1, 0)
+    label.Position = UDim2.new(0, 12, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = Color3.fromRGB(200, 200, 210)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 5
+    label.Parent = ToggleFrame
 
-    local SwitchBg = Instance.new("Frame")
-    SwitchBg.Size = UDim2.new(0, 44, 0, 24)
-    SwitchBg.Position = UDim2.new(1, -56, 0.5, -12)
-    SwitchBg.BackgroundColor3 = initialValue and Color3.fromRGB(80, 180, 100) or Color3.fromRGB(70, 70, 78)
-    SwitchBg.BorderSizePixel = 0
-    SwitchBg.ZIndex = 5
-    SwitchBg.Parent = ToggleFrame
+    local switchBg = Instance.new("Frame")
+    switchBg.Size = UDim2.new(0, 44, 0, 24)
+    switchBg.Position = UDim2.new(1, -56, 0.5, -12)
+    switchBg.BackgroundColor3 = initialValue and Color3.fromRGB(80, 180, 100) or Color3.fromRGB(70, 70, 78)
+    switchBg.BorderSizePixel = 0
+    switchBg.ZIndex = 5
+    switchBg.Parent = ToggleFrame
 
-    local SwitchCorner = Instance.new("UICorner")
-    SwitchCorner.CornerRadius = UDim.new(1, 0)
-    SwitchCorner.Parent = SwitchBg
+    local c2 = Instance.new("UICorner")
+    c2.CornerRadius = UDim.new(1, 0)
+    c2.Parent = switchBg
 
-    local Knob = Instance.new("Frame")
-    Knob.Size = UDim2.new(0, 18, 0, 18)
-    Knob.Position = initialValue and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-    Knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    Knob.BorderSizePixel = 0
-    Knob.ZIndex = 6
-    Knob.Parent = SwitchBg
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = initialValue and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 6
+    knob.Parent = switchBg
 
-    local KnobCorner = Instance.new("UICorner")
-    KnobCorner.CornerRadius = UDim.new(1, 0)
-    KnobCorner.Parent = Knob
+    local c3 = Instance.new("UICorner")
+    c3.CornerRadius = UDim.new(1, 0)
+    c3.Parent = knob
 
-    local ClickArea = Instance.new("TextButton")
-    ClickArea.Size = UDim2.new(1, 0, 1, 0)
-    ClickArea.BackgroundTransparency = 1
-    ClickArea.Text = ""
-    ClickArea.ZIndex = 10
-    ClickArea.Active = true
-    ClickArea.Parent = ToggleFrame
+    local clickArea = Instance.new("TextButton")
+    clickArea.Size = UDim2.new(1, 0, 1, 0)
+    clickArea.BackgroundTransparency = 1
+    clickArea.Text = ""
+    clickArea.ZIndex = 10
+    clickArea.Active = true
+    clickArea.Parent = ToggleFrame
 
     local currentValue = initialValue
 
     local function updateVisual(value)
         if value then
-            SwitchBg.BackgroundColor3 = Color3.fromRGB(80, 180, 100)
-            Knob.Position = UDim2.new(1, -21, 0.5, -9)
+            switchBg.BackgroundColor3 = Color3.fromRGB(80, 180, 100)
+            knob.Position = UDim2.new(1, -21, 0.5, -9)
         else
-            SwitchBg.BackgroundColor3 = Color3.fromRGB(70, 70, 78)
-            Knob.Position = UDim2.new(0, 3, 0.5, -9)
+            switchBg.BackgroundColor3 = Color3.fromRGB(70, 70, 78)
+            knob.Position = UDim2.new(0, 3, 0.5, -9)
         end
     end
 
-    ClickArea.MouseButton1Click:Connect(function()
+    clickArea.MouseButton1Click:Connect(function()
         if State.IsClosed then return end
         currentValue = not currentValue
         updateVisual(currentValue)
@@ -401,7 +396,7 @@ local function CreatePlaceholder(parent, text)
 end
 
 -- ============================================================
--- CANDY FARM (RANDOM TARGET)
+-- CANDY FARM
 -- ============================================================
 local function GetAllCandies()
     local character = State.CurrentCharacter or LocalPlayer.Character
@@ -439,20 +434,19 @@ local function TeleportToAndCollect(targetPart)
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return false end
 
-    local success = pcall(function()
+    local ok = pcall(function()
         character:PivotTo(CFrame.new(targetPart.Position + Vector3.new(0, 2, 0)))
     end)
-    if not success then return false end
+    if not ok then return false end
 
-    local originalCollide = rootPart.CanCollide
+    local origCollide = rootPart.CanCollide
     rootPart.CanCollide = true
     task.wait(CONFIG.COLLECT_NUDGE_DURATION)
     pcall(function()
         rootPart.CFrame = rootPart.CFrame * CFrame.new(0, -1, 0)
     end)
     task.wait(0.05)
-    rootPart.CanCollide = originalCollide
-
+    rootPart.CanCollide = origCollide
     return true
 end
 
@@ -464,6 +458,8 @@ local function TeleportToLobby()
     end)
 end
 
+local CandyFarmToggleUpdate
+
 local function StartCandyFarm()
     if State.CandyFarmThread then task.cancel(State.CandyFarmThread) end
     State.CandyCount = 0
@@ -473,8 +469,7 @@ local function StartCandyFarm()
             if not character then task.wait(1) continue end
             local candy = GetRandomCandy()
             if candy then
-                local success = TeleportToAndCollect(candy)
-                if success then
+                if TeleportToAndCollect(candy) then
                     State.CandyCount = State.CandyCount + 1
                     if State.CandyCount >= CONFIG.MAX_CANDY_LIMIT then
                         State.CandyFarmEnabled = false
@@ -498,7 +493,7 @@ local function StopCandyFarm()
 end
 
 -- ============================================================
--- ANTI-AFK (VirtualUser)
+-- ANTI-AFK
 -- ============================================================
 local function StartAntiAFK()
     if State.AntiAFKThread then task.cancel(State.AntiAFKThread) end
@@ -511,7 +506,7 @@ local function StartAntiAFK()
                 task.wait(1)
                 VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
             end)
-            print("[MM2] Anti-AFK pulse sent via VirtualUser.")
+            print("[MM2] Anti-AFK pulse sent.")
         end
     end)
 end
@@ -525,7 +520,7 @@ local function StopAntiAFK()
 end
 
 -- ============================================================
--- ROLE DETECTION (checks Backpack + Character)
+-- ROLE DETECTION (Backpack + Character)
 -- ============================================================
 local function GetPlayerRole(player)
     if player == LocalPlayer then return nil end
@@ -544,8 +539,7 @@ local function GetPlayerRole(player)
         if not container then return false end
         for _, child in ipairs(container:GetChildren()) do
             if child:IsA("Tool") then
-                local n = child.Name:lower()
-                if n:find(toolName) then return true end
+                if child.Name:lower():find(toolName) then return true end
             end
         end
         return false
@@ -556,7 +550,6 @@ local function GetPlayerRole(player)
     if hasTool(character, "knife") or hasTool(backpack, "knife") then
         return "Murderer"
     end
-
     if hasTool(character, "gun") or hasTool(character, "revolver") or hasTool(character, "pistol")
     or hasTool(backpack, "gun") or hasTool(backpack, "revolver") or hasTool(backpack, "pistol") then
         return "Sheriff"
@@ -581,7 +574,7 @@ end
 -- ESP
 -- ============================================================
 local function ClearAllHighlights()
-    for player, hl in pairs(State.ESPHighlights) do
+    for _, hl in pairs(State.ESPHighlights) do
         pcall(function() hl:Destroy() end)
     end
     State.ESPHighlights = {}
@@ -589,12 +582,14 @@ end
 
 local function UpdateESP()
     if State.IsClosed or not State.ESPEnabled then return end
+
     for player, hl in pairs(State.ESPHighlights) do
         if not player.Parent or not player.Character then
             pcall(function() hl:Destroy() end)
             State.ESPHighlights[player] = nil
         end
     end
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local role = GetPlayerRole(player)
@@ -652,14 +647,11 @@ end
 local function TeleportToMurderer()
     local localChar = State.CurrentCharacter or LocalPlayer.Character
     if not localChar then return end
-    local localRoot = localChar:FindFirstChild("HumanoidRootPart")
-    if not localRoot then return end
 
     local murdererPlayer = nil
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
-            local role = GetPlayerRole(player)
-            if role == "Murderer" then
+            if GetPlayerRole(player) == "Murderer" then
                 murdererPlayer = player
                 break
             end
@@ -671,12 +663,8 @@ local function TeleportToMurderer()
         return
     end
 
-    local murdererChar = murdererPlayer.Character
-    local murdererRoot = murdererChar and murdererChar:FindFirstChild("HumanoidRootPart")
-    if not murdererRoot then
-        print("[MM2] Murderer has no HumanoidRootPart.")
-        return
-    end
+    local murdererRoot = murdererPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not murdererRoot then return end
 
     pcall(function()
         localChar:PivotTo(murdererRoot.CFrame * CFrame.new(0, 0, -3))
@@ -687,9 +675,7 @@ end
 -- ============================================================
 -- BUILD FARM TAB
 -- ============================================================
-local CandyFarmToggleUpdate
-
-local CandyFarmToggle, candyUpdater = CreateToggle(
+local candyToggle, candyUpdater = CreateToggle(
     FarmTab, "🍬 Candy Auto Farm", false,
     function(value)
         State.CandyFarmEnabled = value
@@ -697,52 +683,52 @@ local CandyFarmToggle, candyUpdater = CreateToggle(
     end
 )
 CandyFarmToggleUpdate = candyUpdater
-CandyFarmToggle.LayoutOrder = 1
+candyToggle.LayoutOrder = 1
 
-local AntiAFKToggle, antiAFKUpdater = CreateToggle(
+local antiAFKToggle, antiAFKUpdater = CreateToggle(
     FarmTab, "🛡️ Anti-AFK", false,
     function(value)
         State.AntiAFKEnabled = value
         if value then StartAntiAFK() else StopAntiAFK() end
     end
 )
-AntiAFKToggle.LayoutOrder = 2
+antiAFKToggle.LayoutOrder = 2
 
 -- ============================================================
 -- BUILD VISUALS TAB
 -- ============================================================
-local ESPToggle, espUpdater = CreateToggle(
+local espToggle, espUpdater = CreateToggle(
     VisualsTab, "👁️ Role ESP", false,
     function(value)
         State.ESPEnabled = value
         if value then StartESP() else StopESP() end
     end
 )
-ESPToggle.LayoutOrder = 1
+espToggle.LayoutOrder = 1
 
-local LegendFrame = Instance.new("Frame")
-LegendFrame.Size = UDim2.new(1, -8, 0, 75)
-LegendFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-LegendFrame.BorderSizePixel = 0
-LegendFrame.LayoutOrder = 2
-LegendFrame.ZIndex = 4
-LegendFrame.Parent = VisualsTab
+local legend = Instance.new("Frame")
+legend.Size = UDim2.new(1, -8, 0, 75)
+legend.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+legend.BorderSizePixel = 0
+legend.LayoutOrder = 2
+legend.ZIndex = 4
+legend.Parent = VisualsTab
 
-local LegendCorner = Instance.new("UICorner")
-LegendCorner.CornerRadius = UDim.new(0, 6)
-LegendCorner.Parent = LegendFrame
+local legendCorner = Instance.new("UICorner")
+legendCorner.CornerRadius = UDim.new(0, 6)
+legendCorner.Parent = legend
 
-local function MakeLegendRow(parent, y, color, text)
+local function MakeLegendRow(y, color, text)
     local dot = Instance.new("Frame")
     dot.Size = UDim2.new(0, 10, 0, 10)
     dot.Position = UDim2.new(0, 12, 0, y)
     dot.BackgroundColor3 = color
     dot.BorderSizePixel = 0
     dot.ZIndex = 5
-    dot.Parent = parent
-    local dotC = Instance.new("UICorner")
-    dotC.CornerRadius = UDim.new(1, 0)
-    dotC.Parent = dot
+    dot.Parent = legend
+    local dc = Instance.new("UICorner")
+    dc.CornerRadius = UDim.new(1, 0)
+    dc.Parent = dot
 
     local lbl = Instance.new("TextLabel")
     lbl.Size = UDim2.new(1, -30, 0, 14)
@@ -754,56 +740,56 @@ local function MakeLegendRow(parent, y, color, text)
     lbl.Font = Enum.Font.Gotham
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.ZIndex = 5
-    lbl.Parent = parent
+    lbl.Parent = legend
 end
 
-MakeLegendRow(LegendFrame, 8, ESP_COLORS.Murderer, "Murderer")
-MakeLegendRow(LegendFrame, 28, ESP_COLORS.Sheriff, "Sheriff")
-MakeLegendRow(LegendFrame, 48, ESP_COLORS.Innocent, "Innocent")
+MakeLegendRow(8, ESP_COLORS.Murderer, "Murderer")
+MakeLegendRow(28, ESP_COLORS.Sheriff, "Sheriff")
+MakeLegendRow(48, ESP_COLORS.Innocent, "Innocent")
 
 -- ============================================================
 -- BUILD MURDERER TAB
 -- ============================================================
-local TPButtonFrame = Instance.new("Frame")
-TPButtonFrame.Size = UDim2.new(1, -8, 0, 45)
-TPButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-TPButtonFrame.BorderSizePixel = 0
-TPButtonFrame.LayoutOrder = 1
-TPButtonFrame.ZIndex = 4
-TPButtonFrame.Parent = MurdererTab
+local tpFrame = Instance.new("Frame")
+tpFrame.Size = UDim2.new(1, -8, 0, 45)
+tpFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
+tpFrame.BorderSizePixel = 0
+tpFrame.LayoutOrder = 1
+tpFrame.ZIndex = 4
+tpFrame.Parent = MurdererTab
 
-local TPButtonCorner = Instance.new("UICorner")
-TPButtonCorner.CornerRadius = UDim.new(0, 6)
-TPButtonCorner.Parent = TPButtonFrame
+local tpc = Instance.new("UICorner")
+tpc.CornerRadius = UDim.new(0, 6)
+tpc.Parent = tpFrame
 
-local TPButton = Instance.new("TextButton")
-TPButton.Size = UDim2.new(1, -16, 1, -10)
-TPButton.Position = UDim2.new(0, 8, 0, 5)
-TPButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-TPButton.Text = "🎯 TP к убийце (одноразово)"
-TPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-TPButton.TextSize = 13
-TPButton.Font = Enum.Font.GothamBold
-TPButton.ZIndex = 5
-TPButton.Parent = TPButtonFrame
+local tpButton = Instance.new("TextButton")
+tpButton.Size = UDim2.new(1, -16, 1, -10)
+tpButton.Position = UDim2.new(0, 8, 0, 5)
+tpButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+tpButton.Text = "🎯 TP к убийце (одноразово)"
+tpButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+tpButton.TextSize = 13
+tpButton.Font = Enum.Font.GothamBold
+tpButton.ZIndex = 5
+tpButton.Parent = tpFrame
 
-local TPButtonCorner2 = Instance.new("UICorner")
-TPButtonCorner2.CornerRadius = UDim.new(0, 6)
-TPButtonCorner2.Parent = TPButton
+local tpc2 = Instance.new("UICorner")
+tpc2.CornerRadius = UDim.new(0, 6)
+tpc2.Parent = tpButton
 
-TPButton.MouseButton1Click:Connect(function()
+tpButton.MouseButton1Click:Connect(function()
     if State.IsClosed then return end
     TeleportToMurderer()
 end)
 
-local MurdererPlaceholder = CreatePlaceholder(MurdererTab, "Скоро... (функции для убийцы)")
-MurdererPlaceholder.LayoutOrder = 2
+local murdererPlaceholder = CreatePlaceholder(MurdererTab, "Скоро... (функции для убийцы)")
+murdererPlaceholder.LayoutOrder = 2
 
 -- ============================================================
 -- BUILD SHERIFF TAB
 -- ============================================================
-local SheriffPlaceholder = CreatePlaceholder(SheriffTab, "Скоро... (функции для шерифа)")
-SheriffPlaceholder.LayoutOrder = 1
+local sheriffPlaceholder = CreatePlaceholder(SheriffTab, "Скоро... (функции для шерифа)")
+sheriffPlaceholder.LayoutOrder = 1
 
 -- ============================================================
 -- MINIMIZE ICON
@@ -822,14 +808,14 @@ MiniIcon.Visible = false
 MiniIcon.ZIndex = 20
 MiniIcon.Parent = ScreenGui
 
-local MiniCorner = Instance.new("UICorner")
-MiniCorner.CornerRadius = UDim.new(0, 8)
-MiniCorner.Parent = MiniIcon
+local mc = Instance.new("UICorner")
+mc.CornerRadius = UDim.new(0, 8)
+mc.Parent = MiniIcon
 
-local MiniStroke = Instance.new("UIStroke")
-MiniStroke.Color = Color3.fromRGB(80, 180, 100)
-MiniStroke.Thickness = 2
-MiniStroke.Parent = MiniIcon
+local ms = Instance.new("UIStroke")
+ms.Color = Color3.fromRGB(80, 180, 100)
+ms.Thickness = 2
+ms.Parent = MiniIcon
 
 -- ============================================================
 -- BUTTON LOGIC
@@ -853,14 +839,23 @@ CloseButton.MouseButton1Click:Connect(function()
     StopCandyFarm()
     StopAntiAFK()
     StopESP()
-    if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
+    if candyUpdater then candyUpdater(false) end
     if antiAFKUpdater then antiAFKUpdater(false) end
     if espUpdater then espUpdater(false) end
-    for _, conn in ipairs(State.Connections) do
-        pcall(function() conn:Disconnect() end)
-    end
-    State.Connections = {}
     ClearAllHighlights()
     ScreenGui:Destroy()
     local character = State.CurrentCharacter or LocalPlayer.Character
     if character then
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+    end
+end)
+
+SetActiveTab("Farm")
+
+print("[MM2 Automation] Script loaded. All functions ready.")
