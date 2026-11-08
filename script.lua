@@ -295,11 +295,22 @@ local function EmergencyTeleport()
 end
 
 local function IsRoundActive()
+    local character = State.CurrentCharacter or LocalPlayer.Character
+    if not character then return false end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("BasePart") or obj:IsA("Model") then
             local n = obj.Name:lower()
             if n:find("candy") or n:find("coin") then
-                return true
+                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
+                if part and part.Transparency < 0.5 then
+                    local dist = (rootPart.Position - part.Position).Magnitude
+                    if dist <= CONFIG.CANDY_SEARCH_RADIUS then
+                        return true
+                    end
+                end
             end
         end
     end
@@ -328,7 +339,6 @@ local function TeleportToAndCollect(targetPart)
         character:PivotTo(CFrame.new(targetPart.Position))
     end)
     if not ok then
-        EmergencyTeleport()
         return false, false
     end
 
@@ -382,15 +392,15 @@ local function StartCandyFarm()
                     return
                 end
 
-                if not IsRoundActive() then
-                    stuckTimer = 0
-                    task.wait(CONFIG.ROUND_CHECK_INTERVAL)
-                    return
-                end
-
                 if not IsCharacterSafe(character) then
                     EmergencyTeleport()
                     task.wait(1)
+                    return
+                end
+
+                if not IsRoundActive() then
+                    stuckTimer = 0
+                    task.wait(CONFIG.ROUND_CHECK_INTERVAL)
                     return
                 end
 
@@ -414,7 +424,6 @@ local function StartCandyFarm()
 
                 if stuckTimer >= 5 then
                     stuckTimer = 0
-                    TeleportToLobby()
                     task.wait(1)
                 end
             end)
@@ -726,7 +735,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 40)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nWaits in lobby, safe teleport."
+InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nWaits if no candy nearby."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -850,4 +859,4 @@ LocalPlayer.CharacterAdded:Connect(function(character)
     end
 end)
 
-print("[MM2 Automation] Script loaded. (Waits in lobby, safe teleport)")
+print("[MM2 Automation] Script loaded. (Waits if no candy nearby, no lobby teleport on stuck)")
