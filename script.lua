@@ -1,6 +1,6 @@
 -- ============================================================
 -- MM2 Automation Hub — 4 Tabs (Farm / Visuals / Murderer / Sheriff)
--- ESP checks Backpack + Character, drag & min/close fixed + hover
+-- ESP checks Backpack + Character, drag & min/close FIXED
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -89,7 +89,7 @@ MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
 -- ============================================================
--- TITLE BAR (drag on empty area, buttons are siblings inside)
+-- TITLE BAR
 -- ============================================================
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
@@ -112,7 +112,6 @@ TitleBarFix.BorderSizePixel = 0
 TitleBarFix.ZIndex = 10
 TitleBarFix.Parent = TitleBar
 
--- Title Label
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -80, 1, 0)
 TitleLabel.Position = UDim2.new(0, 10, 0, 0)
@@ -126,33 +125,26 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- DRAG AREA (invisible, only covers left part of title bar,
--- so it doesn't overlap buttons)
+-- DRAG (direct on TitleBar, but ignore clicks in button zone)
 -- ============================================================
-local DragArea = Instance.new("TextButton")
-DragArea.Name = "DragArea"
-DragArea.Size = UDim2.new(1, -80, 1, 0) -- leave 80px on right for buttons
-DragArea.Position = UDim2.new(0, 0, 0, 0)
-DragArea.BackgroundTransparency = 1
-DragArea.Text = ""
-DragArea.AutoButtonColor = false
-DragArea.ZIndex = 12
-DragArea.Parent = TitleBar
-
 local dragging = false
 local dragStart = nil
 local startPos = nil
+local BUTTON_ZONE_START = 1 - (80 / 300) -- buttons occupy rightmost ~80px
 
-DragArea.InputBegan:Connect(function(input)
+TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
+        -- Ignore clicks on the right side where buttons are
+        local relX = (input.Position.X - TitleBar.AbsolutePosition.X) / TitleBar.AbsoluteSize.X
+        if relX >= BUTTON_ZONE_START then return end
         dragging = true
         dragStart = input.Position
         startPos = MainFrame.Position
     end
 end)
 
-DragArea.InputChanged:Connect(function(input)
+TitleBar.InputChanged:Connect(function(input)
     if not dragging then return end
     if input.UserInputType == Enum.UserInputType.MouseMovement
     or input.UserInputType == Enum.UserInputType.Touch then
@@ -164,7 +156,7 @@ DragArea.InputChanged:Connect(function(input)
     end
 end)
 
-DragArea.InputEnded:Connect(function(input)
+TitleBar.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
@@ -172,21 +164,21 @@ DragArea.InputEnded:Connect(function(input)
 end)
 
 -- ============================================================
--- MIN/CLOSE BUTTONS (inside TitleBar, as siblings of DragArea)
+-- MIN/CLOSE BUTTONS (visible backgrounds, AutoButtonColor on)
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
-MinButton.Size = UDim2.new(0, 30, 0, 30)
-MinButton.Position = UDim2.new(1, -65, 0, 2)
-MinButton.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-MinButton.BackgroundTransparency = 1
+MinButton.Size = UDim2.new(0, 30, 0, 28)
+MinButton.Position = UDim2.new(1, -66, 0, 3)
+MinButton.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+MinButton.BorderSizePixel = 0
 MinButton.Text = "−"
-MinButton.TextColor3 = Color3.fromRGB(180, 180, 190)
+MinButton.TextColor3 = Color3.fromRGB(200, 200, 210)
 MinButton.TextSize = 20
 MinButton.Font = Enum.Font.GothamBold
-MinButton.AutoButtonColor = false
+MinButton.AutoButtonColor = true
 MinButton.Active = true
-MinButton.ZIndex = 20
+MinButton.ZIndex = 100
 MinButton.Parent = TitleBar
 
 local MinButtonCorner = Instance.new("UICorner")
@@ -195,39 +187,22 @@ MinButtonCorner.Parent = MinButton
 
 local CloseButton = Instance.new("TextButton")
 CloseButton.Name = "CloseButton"
-CloseButton.Size = UDim2.new(0, 30, 0, 30)
-CloseButton.Position = UDim2.new(1, -35, 0, 2)
-CloseButton.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-CloseButton.BackgroundTransparency = 1
+CloseButton.Size = UDim2.new(0, 30, 0, 28)
+CloseButton.Position = UDim2.new(1, -34, 0, 3)
+CloseButton.BackgroundColor3 = Color3.fromRGB(80, 45, 45)
+CloseButton.BorderSizePixel = 0
 CloseButton.Text = "X"
-CloseButton.TextColor3 = Color3.fromRGB(255, 100, 100)
+CloseButton.TextColor3 = Color3.fromRGB(255, 140, 140)
 CloseButton.TextSize = 16
 CloseButton.Font = Enum.Font.GothamBold
-CloseButton.AutoButtonColor = false
+CloseButton.AutoButtonColor = true
 CloseButton.Active = true
-CloseButton.ZIndex = 20
+CloseButton.ZIndex = 100
 CloseButton.Parent = TitleBar
 
 local CloseButtonCorner = Instance.new("UICorner")
 CloseButtonCorner.CornerRadius = UDim.new(0, 4)
 CloseButtonCorner.Parent = CloseButton
-
--- ============================================================
--- HOVER EFFECT for Min/Close (same darkening as tabs)
--- ============================================================
-local function addHover(button, hoverColor, normalTransparency)
-    button.MouseEnter:Connect(function()
-        button.BackgroundTransparency = 0
-        button.BackgroundColor3 = hoverColor
-    end)
-    button.MouseLeave:Connect(function()
-        button.BackgroundTransparency = normalTransparency
-        button.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-    end)
-end
-
-addHover(MinButton, Color3.fromRGB(60, 60, 70), 1)
-addHover(CloseButton, Color3.fromRGB(90, 50, 50), 1)
 
 -- ============================================================
 -- TAB BAR
@@ -279,7 +254,6 @@ local function CreateTab(name, order)
     button.ZIndex = 6
     button.Parent = TabBar
 
-    -- Hover
     button.MouseEnter:Connect(function()
         if ActiveTab ~= name then
             button.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
@@ -838,27 +812,4 @@ SheriffPlaceholder.LayoutOrder = 1
 local MiniIcon = Instance.new("TextButton")
 MiniIcon.Name = "MiniIcon"
 MiniIcon.Size = UDim2.new(0, 40, 0, 40)
-MiniIcon.Position = UDim2.new(0, 50, 0, 50)
-MiniIcon.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-MiniIcon.BorderSizePixel = 0
-MiniIcon.Text = "M"
-MiniIcon.TextColor3 = Color3.fromRGB(220, 220, 230)
-MiniIcon.TextSize = 16
-MiniIcon.Font = Enum.Font.GothamBold
-MiniIcon.Visible = false
-MiniIcon.ZIndex = 20
-MiniIcon.Parent = ScreenGui
-
-local MiniCorner = Instance.new("UICorner")
-MiniCorner.CornerRadius = UDim.new(0, 8)
-MiniCorner.Parent = MiniIcon
-
-local MiniStroke = Instance.new("UIStroke")
-MiniStroke.Color = Color3.fromRGB(80, 180, 100)
-MiniStroke.Thickness = 2
-MiniStroke.Parent = MiniIcon
-
--- ============================================================
--- BUTTON LOGIC
--- ============================================================
-MinButton.MouseButton1Click:Connect
+MiniIcon.Position = UDim2.new(0,
