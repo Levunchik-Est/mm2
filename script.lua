@@ -8,6 +8,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local VirtualUser = game:GetService("VirtualUser")
+local CollectionService = game:GetService("CollectionService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -45,19 +46,16 @@ local State = {
     ESPThread = nil,
     CandyCount = 0,
     ESPHighlights = {},
-    Connections = {},
     CurrentCharacter = nil,
 }
 
 -- ============================================================
--- CHARACTER REFRESH
+-- CHARACTER REFRESH (basic — restart added at the end)
 -- ============================================================
-local function OnCharacterAdded(character)
-    State.CurrentCharacter = character
-end
-
 State.CurrentCharacter = LocalPlayer.Character
-LocalPlayer.CharacterAdded:Connect(OnCharacterAdded)
+LocalPlayer.CharacterAdded:Connect(function(character)
+    State.CurrentCharacter = character
+end)
 
 -- ============================================================
 -- GUI (Modern Interface)
@@ -228,7 +226,7 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
 end
 
 -- ============================================================
--- CANDY FARM
+-- CANDY FARM (fixed: returns two values, per-iteration pcall)
 -- ============================================================
 local function GetAllCandies()
     local character = State.CurrentCharacter or LocalPlayer.Character
@@ -262,25 +260,33 @@ end
 
 local function TeleportToAndCollect(targetPart)
     local character = State.CurrentCharacter or LocalPlayer.Character
-    if not character then return false end
+    if not character then return false, false end
     local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return false end
+    if not rootPart then return false, false end
 
-    local success = pcall(function()
+    if not targetPart or not targetPart.Parent then
+        return false, false
+    end
+
+    local ok = pcall(function()
         character:PivotTo(CFrame.new(targetPart.Position + Vector3.new(0, 2, 0)))
     end)
-    if not success then return false end
+    if not ok then return false, false end
 
-    local originalCollide = rootPart.CanCollide
+    local origCollide = rootPart.CanCollide
     rootPart.CanCollide = true
     task.wait(CONFIG.COLLECT_NUDGE_DURATION)
     pcall(function()
         rootPart.CFrame = rootPart.CFrame * CFrame.new(0, -1, 0)
     end)
-    task.wait(0.05)
-    rootPart.CanCollide = originalCollide
+    task.wait(0.2)
+    rootPart.CanCollide = origCollide
 
-    return true
+    local collected = (targetPart.Parent == nil)
+        or (targetPart.Transparency >= 1)
+        or (not targetPart:IsDescendantOf(Workspace))
+
+    return true, collected
 end
 
 local function TeleportToLobby()
@@ -292,25 +298,57 @@ local function TeleportToLobby()
 end
 
 local function StartCandyFarm()
-    if State.CandyFarmThread then task.cancel(State.CandyFarmThread) end
+    if State.CandyFarmThread then
+        pcall(function() task.cancel(State.CandyFarmThread) end)
+    end
     State.CandyCount = 0
+
     State.CandyFarmThread = task.spawn(function()
+        local stuckTimer = 0
+
         while State.CandyFarmEnabled and not State.IsClosed do
-            local character = State.CurrentCharacter or LocalPlayer.Character
-            if not character then task.wait(1) continue end
-            local candy = GetRandomCandy()
-            if candy then
-                local success = TeleportToAndCollect(candy)
-                if success then
-                    State.CandyCount = State.CandyCount + 1
-                    if State.CandyCount >= CONFIG.MAX_CANDY_LIMIT then
-                        State.CandyFarmEnabled = false
-                        if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
-                        TeleportToLobby()
-                        break
-                    end
+            local ok, err = pcall(function()
+                local character = State.CurrentCharacter or LocalPlayer.Character
+                if not character then
+                    task.wait(1)
+                    return
                 end
+
+                local rootPart = character:FindFirstChild("HumanoidRootPart")
+                if not rootPart then
+                    task.wait(0.5)
+                    return
+                end
+
+                local candy = GetRandomCandy()
+                if candy then
+                    local teleported, collected = TeleportToAndCollect(candy)
+                    if teleported and collected then
+                        State.CandyCount = State.CandyCount + 1
+                        stuckTimer = 0
+                        if State.CandyCount >= CONFIG.MAX_CANDY_LIMIT then
+                            State.CandyFarmEnabled = false
+                            if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
+                            TeleportToLobby()
+                        end
+                    else
+                        stuckTimer = stuckTimer + 1
+                    end
+                else
+                    stuckTimer = stuckTimer + 1
+                end
+
+                if stuckTimer >= 5 then
+                    stuckTimer = 0
+                    TeleportToLobby()
+                    task.wait(1)
+                end
+            end)
+
+            if not ok then
+                warn("[MM2 CandyFarm] iteration error: " .. tostring(err))
             end
+
             task.wait(CONFIG.CANDY_FARM_INTERVAL)
         end
     end)
@@ -319,13 +357,13 @@ end
 local function StopCandyFarm()
     State.CandyFarmEnabled = false
     if State.CandyFarmThread then
-        task.cancel(State.CandyFarmThread)
+        pcall(function() task.cancel(State.CandyFarmThread) end)
         State.CandyFarmThread = nil
     end
 end
 
 -- ============================================================
--- ANTI-AFK
+-- ANTI-AFK (VirtualUser)
 -- ============================================================
 local function StartAntiAFK()
     if State.AntiAFKThread then task.cancel(State.AntiAFKThread) end
@@ -334,9 +372,9 @@ local function StartAntiAFK()
             task.wait(CONFIG.ANTI_AFK_INTERVAL)
             if State.IsClosed or not State.AntiAFKEnabled then break end
             pcall(function()
-                VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
                 task.wait(1)
-                VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
             end)
             print("[MM2] Anti-AFK pulse sent via VirtualUser.")
         end
@@ -389,7 +427,7 @@ local function GetPlayerRole(player)
 
     local tags = {}
     pcall(function()
-        for _, tag in ipairs(game:GetService("CollectionService"):GetTags(character)) do
+        for _, tag in ipairs(CollectionService:GetTags(character)) do
             table.insert(tags, tag:lower())
         end
     end)
@@ -406,7 +444,7 @@ end
 -- ESP
 -- ============================================================
 local function ClearAllHighlights()
-    for player, hl in pairs(State.ESPHighlights) do
+    for _, hl in pairs(State.ESPHighlights) do
         pcall(function() hl:Destroy() end)
     end
     State.ESPHighlights = {}
@@ -472,7 +510,7 @@ local function StopESP()
 end
 
 -- ============================================================
--- TP TO MURDERER (One-shot button)
+-- TP TO MURDERER
 -- ============================================================
 local function TeleportToMurderer()
     local localChar = State.CurrentCharacter or LocalPlayer.Character
@@ -515,10 +553,7 @@ end
 local CandyFarmToggleUpdate
 
 local CandyFarmFrame, candyUpdater = CreateToggle(
-    ContentFrame,
-    0,
-    "🍬 Candy Farm (random)",
-    false,
+    ContentFrame, 0, "🍬 Candy Farm (random)", false,
     function(value)
         State.CandyFarmEnabled = value
         if value then StartCandyFarm() else StopCandyFarm() end
@@ -527,10 +562,7 @@ local CandyFarmFrame, candyUpdater = CreateToggle(
 CandyFarmToggleUpdate = candyUpdater
 
 local AntiAFKFrame, antiAFKUpdater = CreateToggle(
-    ContentFrame,
-    60,
-    "🛡️ Anti-AFK",
-    false,
+    ContentFrame, 60, "🛡️ Anti-AFK", false,
     function(value)
         State.AntiAFKEnabled = value
         if value then StartAntiAFK() else StopAntiAFK() end
@@ -538,10 +570,7 @@ local AntiAFKFrame, antiAFKUpdater = CreateToggle(
 )
 
 local ESPFrame, espUpdater = CreateToggle(
-    ContentFrame,
-    120,
-    "👁️ Role ESP",
-    false,
+    ContentFrame, 120, "👁️ Role ESP", false,
     function(value)
         State.ESPEnabled = value
         if value then StartESP() else StopESP() end
@@ -623,7 +652,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 40)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport."
+InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nSurvives round changes."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -632,7 +661,7 @@ InfoLabel.TextWrapped = true
 InfoLabel.Parent = ContentFrame
 
 -- ============================================================
--- DRAG (TitleBar left zone, buttons not touched)
+-- DRAG
 -- ============================================================
 local dragging = false
 local dragStart = nil
@@ -696,7 +725,7 @@ MiniStroke.Thickness = 2
 MiniStroke.Parent = MiniIcon
 
 -- ============================================================
--- MIN / CLOSE HANDLERS (at the end, all refs exist)
+-- MIN / CLOSE HANDLERS
 -- ============================================================
 MinButton.MouseButton1Click:Connect(function()
     if State.IsClosed then return end
@@ -734,4 +763,18 @@ CloseButton.MouseButton1Click:Connect(function()
     end
 end)
 
-print("[MM2 Automation] Script loaded. (Random candy target)")
+-- ============================================================
+-- CHARACTER RESPAWN → RESTART CANDY FARM THREAD
+-- (placed at end so StartCandyFarm is already defined)
+-- ============================================================
+LocalPlayer.CharacterAdded:Connect(function(character)
+    State.CurrentCharacter = character
+    if State.CandyFarmEnabled and not State.IsClosed then
+        task.wait(1.5)
+        if State.CandyFarmEnabled and not State.IsClosed then
+            StartCandyFarm()
+        end
+    end
+end)
+
+print("[MM2 Automation] Script loaded. (Candy Farm survives round changes)")
