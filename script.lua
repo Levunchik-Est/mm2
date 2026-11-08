@@ -1,12 +1,13 @@
 -- ============================================================
 -- MM2 Automation Hub — 4 Tabs (Farm / Visuals / Murderer / Sheriff)
--- Requirements: Executor with LocalScript execution capability
+-- Anti-AFK fixed with VirtualUser (real input simulation)
 -- ============================================================
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -17,7 +18,7 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local CONFIG = {
     CANDY_FARM_INTERVAL = 2.0,
     CANDY_SEARCH_RADIUS = 300,
-    ANTI_AFK_INTERVAL = 600,
+    ANTI_AFK_INTERVAL = 600,        -- 10 minutes
     MAX_CANDY_LIMIT = 200,
     LOBBY_POSITION = Vector3.new(0, 10, 0),
     ESP_UPDATE_INTERVAL = 0.5,
@@ -88,7 +89,7 @@ MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
 -- ============================================================
--- TITLE BAR (drag handle only)
+-- TITLE BAR
 -- ============================================================
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
@@ -124,7 +125,7 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- MIN/CLOSE BUTTONS (top layer, in MainFrame)
+-- MIN/CLOSE BUTTONS
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
@@ -155,7 +156,7 @@ CloseButton.ZIndex = 100
 CloseButton.Parent = MainFrame
 
 -- ============================================================
--- DRAG (title bar only, RenderStepped, no global InputEnded)
+-- DRAG
 -- ============================================================
 local dragging = false
 local dragStart = nil
@@ -316,7 +317,6 @@ local function CreateToggle(parent, labelText, initialValue, callback)
     KnobCorner.CornerRadius = UDim.new(1, 0)
     KnobCorner.Parent = Knob
 
-    -- ClickArea on TOP with high ZIndex
     local ClickArea = Instance.new("TextButton")
     ClickArea.Size = UDim2.new(1, 0, 1, 0)
     ClickArea.BackgroundTransparency = 1
@@ -470,7 +470,7 @@ local function StopCandyFarm()
 end
 
 -- ============================================================
--- ANTI-AFK
+-- ANTI-AFK (FIXED — uses VirtualUser to simulate real input)
 -- ============================================================
 local function StartAntiAFK()
     if State.AntiAFKThread then task.cancel(State.AntiAFKThread) end
@@ -478,16 +478,16 @@ local function StartAntiAFK()
         while State.AntiAFKEnabled and not State.IsClosed do
             task.wait(CONFIG.ANTI_AFK_INTERVAL)
             if State.IsClosed or not State.AntiAFKEnabled then break end
-            local character = State.CurrentCharacter or LocalPlayer.Character
-            if character then
-                local rootPart = character:FindFirstChild("HumanoidRootPart")
-                if rootPart then
-                    local originalPos = rootPart.CFrame
-                    pcall(function() rootPart.CFrame = originalPos * CFrame.new(0.1, 0, 0) end)
-                    task.wait(0.1)
-                    pcall(function() rootPart.CFrame = originalPos end)
-                end
-            end
+
+            -- Simulate a real mouse click via VirtualUser.
+            -- Roblox counts this as user activity and resets the idle timer.
+            pcall(function()
+                VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                task.wait(1)
+                VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            end)
+
+            print("[MM2] Anti-AFK pulse sent via VirtualUser.")
         end
     end)
 end
@@ -611,7 +611,7 @@ local function StopESP()
 end
 
 -- ============================================================
--- TP TO MURDERER (One-shot button)
+-- TP TO MURDERER
 -- ============================================================
 local function TeleportToMurderer()
     local localChar = State.CurrentCharacter or LocalPlayer.Character
@@ -840,4 +840,4 @@ end)
 
 SetActiveTab("Farm")
 
-print("[MM2 Automation] Script loaded. 4 tabs ready. (All buttons fixed)")
+print("[MM2 Automation] Script loaded. Anti-AFK uses VirtualUser (real input simulation).")
