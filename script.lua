@@ -1,6 +1,5 @@
 -- ============================================================
--- MM2 Automation Hub (final clean build)
--- Tabs: Farm / Visuals / Murderer / Sheriff
+-- MM2 Automation Hub (final — min/close handlers at the end)
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -121,51 +120,7 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- DRAG ZONE (separate Frame covering only left part of title bar)
--- ============================================================
-local DragZone = Instance.new("Frame")
-DragZone.Name = "DragZone"
-DragZone.Size = UDim2.new(1, -80, 1, 0)
-DragZone.Position = UDim2.new(0, 0, 0, 0)
-DragZone.BackgroundTransparency = 1
-DragZone.Active = true
-DragZone.ZIndex = 12
-DragZone.Parent = TitleBar
-
-local dragging = false
-local dragStart = nil
-local startPos = nil
-
-DragZone.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
-    end
-end)
-
-DragZone.InputChanged:Connect(function(input)
-    if not dragging then return end
-    if input.UserInputType == Enum.UserInputType.MouseMovement
-    or input.UserInputType == Enum.UserInputType.Touch then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-DragZone.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
--- ============================================================
--- MIN / CLOSE BUTTONS (visible, AutoButtonColor for hover)
+-- MIN / CLOSE BUTTONS
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
@@ -206,57 +161,31 @@ CloseCorner.CornerRadius = UDim.new(0, 4)
 CloseCorner.Parent = CloseButton
 
 -- ============================================================
--- MIN / CLOSE BUTTON HANDLERS (this was missing!)
+-- DRAG ZONE (left part of title bar, doesn't touch buttons)
 -- ============================================================
-MinButton.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    State.IsMinimized = true
-    MainFrame.Visible = false
-    MiniIcon.Visible = true
-end)
+local DragZone = Instance.new("Frame")
+DragZone.Name = "DragZone"
+DragZone.Size = UDim2.new(1, -80, 1, 0)
+DragZone.Position = UDim2.new(0, 0, 0, 0)
+DragZone.BackgroundTransparency = 1
+DragZone.Active = true
+DragZone.ZIndex = 12
+DragZone.Parent = TitleBar
 
-CloseButton.MouseButton1Click:Connect(function()
-    State.IsClosed = true
-    StopCandyFarm()
-    StopAntiAFK()
-    StopESP()
-    if candyUpdater then candyUpdater(false) end
-    if antiAFKUpdater then antiAFKUpdater(false) end
-    if espUpdater then espUpdater(false) end
-    ClearAllHighlights()
-    ScreenGui:Destroy()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if character then
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if root then
-            pcall(function()
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
-        end
-    end
-end)
-
--- ============================================================
--- DRAG (only left zone of title bar; buttons excluded)
--- ============================================================
 local dragging = false
 local dragStart = nil
 local startPos = nil
-local BUTTON_ZONE_START = 1 - (80 / 300)
 
-TitleBar.InputBegan:Connect(function(input)
+DragZone.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
-        local relX = (input.Position.X - TitleBar.AbsolutePosition.X) / TitleBar.AbsoluteSize.X
-        if relX >= BUTTON_ZONE_START then return end
         dragging = true
         dragStart = input.Position
         startPos = MainFrame.Position
     end
 end)
 
-TitleBar.InputChanged:Connect(function(input)
+DragZone.InputChanged:Connect(function(input)
     if not dragging then return end
     if input.UserInputType == Enum.UserInputType.MouseMovement
     or input.UserInputType == Enum.UserInputType.Touch then
@@ -268,7 +197,7 @@ TitleBar.InputChanged:Connect(function(input)
     end
 end)
 
-TitleBar.InputEnded:Connect(function(input)
+DragZone.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
@@ -596,7 +525,7 @@ local function StopAntiAFK()
 end
 
 -- ============================================================
--- ROLE DETECTION (Backpack + Character)
+-- ROLE DETECTION
 -- ============================================================
 local function GetPlayerRole(player)
     if player == LocalPlayer then return nil end
@@ -894,7 +823,7 @@ ms.Thickness = 2
 ms.Parent = MiniIcon
 
 -- ============================================================
--- BUTTON LOGIC
+-- MIN / CLOSE HANDLERS (placed at end, after all refs exist)
 -- ============================================================
 MinButton.MouseButton1Click:Connect(function()
     if State.IsClosed then return end
@@ -934,4 +863,4 @@ end)
 
 SetActiveTab("Farm")
 
-print("[MM2 Automation] Script loaded. All functions ready.")
+print("[MM2 Automation] Script loaded. Min/Close + icon restore ready.")
