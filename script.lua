@@ -1,6 +1,6 @@
 -- ============================================================
 -- MM2 Automation Hub — 4 Tabs (Farm / Visuals / Murderer / Sheriff)
--- ESP checks Backpack + Character (survives weapon holstering)
+-- ESP checks Backpack + Character, drag & min/close fixed
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -89,7 +89,7 @@ MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
 -- ============================================================
--- TITLE BAR
+-- TITLE BAR (drag handle only — buttons are outside it)
 -- ============================================================
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
@@ -125,7 +125,42 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- MIN/CLOSE BUTTONS
+-- DRAG (title bar only, no global input hooks)
+-- ============================================================
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+    end
+end)
+
+TitleBar.InputChanged:Connect(function(input)
+    if not dragging then return end
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- ============================================================
+-- MIN/CLOSE BUTTONS (outside TitleBar, on top layer)
 -- ============================================================
 local MinButton = Instance.new("TextButton")
 MinButton.Name = "MinButton"
@@ -154,37 +189,6 @@ CloseButton.AutoButtonColor = false
 CloseButton.Active = true
 CloseButton.ZIndex = 100
 CloseButton.Parent = MainFrame
-
--- ============================================================
--- DRAG
--- ============================================================
-local dragging = false
-local dragStart = nil
-local startPos = nil
-
-TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
-    end
-end)
-
-RunService.RenderStepped:Connect(function()
-    if not dragging then return end
-    if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-    and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.Touch) then
-        dragging = false
-        return
-    end
-    local mousePos = UserInputService:GetMouseLocation()
-    local delta = mousePos - dragStart
-    MainFrame.Position = UDim2.new(
-        startPos.X.Scale, startPos.X.Offset + delta.X,
-        startPos.Y.Scale, startPos.Y.Offset + delta.Y
-    )
-end)
 
 -- ============================================================
 -- TAB BAR
@@ -497,14 +501,13 @@ local function StopAntiAFK()
 end
 
 -- ============================================================
--- ROLE DETECTION (FIXED — checks Backpack + Character)
+-- ROLE DETECTION (checks Backpack + Character)
 -- ============================================================
 local function GetPlayerRole(player)
     if player == LocalPlayer then return nil end
     local character = player.Character
     if not character then return nil end
 
-    -- 1) Attribute-based
     local attrRole = character:GetAttribute("Role") or player:GetAttribute("Role")
     if type(attrRole) == "string" then
         local r = attrRole:lower()
@@ -513,7 +516,6 @@ local function GetPlayerRole(player)
         if r:find("innocent") then return "Innocent" end
     end
 
-    -- 2) Tool-based: check BOTH Character (equipped) and Backpack (holstered)
     local function hasTool(container, toolName)
         if not container then return false end
         for _, child in ipairs(container:GetChildren()) do
@@ -527,18 +529,15 @@ local function GetPlayerRole(player)
 
     local backpack = player:FindFirstChild("Backpack")
 
-    -- Knife in Character OR Backpack → Murderer
     if hasTool(character, "knife") or hasTool(backpack, "knife") then
         return "Murderer"
     end
 
-    -- Gun in Character OR Backpack → Sheriff
     if hasTool(character, "gun") or hasTool(character, "revolver") or hasTool(character, "pistol")
     or hasTool(backpack, "gun") or hasTool(backpack, "revolver") or hasTool(backpack, "pistol") then
         return "Sheriff"
     end
 
-    -- 3) Tag-based fallback
     local tags = {}
     pcall(function()
         for _, tag in ipairs(game:GetService("CollectionService"):GetTags(character)) do
@@ -853,4 +852,4 @@ end)
 
 SetActiveTab("Farm")
 
-print("[MM2 Automation] Script loaded. ESP checks Backpack + Character.")
+print("[MM2 Automation] Script loaded. Drag + Min/Close + ESP(Backpack) fixed.")
