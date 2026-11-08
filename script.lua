@@ -148,45 +148,52 @@ TitleLabel.ZIndex = 11
 TitleLabel.Parent = TitleBar
 
 -- ============================================================
--- MIN / CLOSE BUTTONS
+-- MIN / CLOSE HANDLERS (connected immediately after buttons)
 -- ============================================================
-local MinButton = Instance.new("TextButton")
-MinButton.Name = "MinButton"
-MinButton.Size = UDim2.new(0, 30, 0, 28)
-MinButton.Position = UDim2.new(1, -66, 0, 3)
-MinButton.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
-MinButton.BorderSizePixel = 0
-MinButton.Text = "−"
-MinButton.TextColor3 = Color3.fromRGB(200, 200, 210)
-MinButton.TextSize = 20
-MinButton.Font = Enum.Font.GothamBold
-MinButton.AutoButtonColor = true
-MinButton.Active = true
-MinButton.ZIndex = 100
-MinButton.Parent = TitleBar
+MinButton.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    MainFrame.Visible = false
+    MiniIcon.Visible = true
+end)
 
-local MinCorner = Instance.new("UICorner")
-MinCorner.CornerRadius = UDim.new(0, 4)
-MinCorner.Parent = MinButton
+MiniIcon.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    MainFrame.Visible = true
+    MiniIcon.Visible = false
+end)
 
-local CloseButton = Instance.new("TextButton")
-CloseButton.Name = "CloseButton"
-CloseButton.Size = UDim2.new(0, 30, 0, 28)
-CloseButton.Position = UDim2.new(1, -34, 0, 3)
-CloseButton.BackgroundColor3 = Color3.fromRGB(80, 45, 45)
-CloseButton.BorderSizePixel = 0
-CloseButton.Text = "X"
-CloseButton.TextColor3 = Color3.fromRGB(255, 140, 140)
-CloseButton.TextSize = 16
-CloseButton.Font = Enum.Font.GothamBold
-CloseButton.AutoButtonColor = true
-CloseButton.Active = true
-CloseButton.ZIndex = 100
-CloseButton.Parent = TitleBar
+CloseButton.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    State.IsClosed = true
+    State.CandyFarmEnabled = false
+    State.AntiAFKEnabled = false
+    State.ESPEnabled = false
 
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 4)
-CloseCorner.Parent = CloseButton
+    -- Stop threads if they exist (functions may not be defined yet at connect time,
+    -- but by the time user clicks X, they are defined)
+    if StopCandyFarm then StopCandyFarm() end
+    if StopAntiAFK then StopAntiAFK() end
+    if StopESP then StopESP() end
+    if ClearAllHighlights then ClearAllHighlights() end
+
+    -- Reset toggles visually
+    if candyUpdater then candyUpdater(false) end
+    if antiAFKUpdater then antiAFKUpdater(false) end
+    if espUpdater then espUpdater(false) end
+
+    ScreenGui:Destroy()
+
+    local character = State.CurrentCharacter or LocalPlayer.Character
+    if character then
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+    end
+end)
 
 -- ============================================================
 -- DRAG (left part of title bar only, buttons excluded)
