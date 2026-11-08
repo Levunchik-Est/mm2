@@ -1,12 +1,13 @@
 -- ============================================================
--- MM2 Automation Hub (final — icon created early, high DisplayOrder)
+-- MM2 Automation Hub
+-- Tabs: Farm / Visuals / Murderer / Sheriff
 -- ============================================================
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local VirtualUser = game:GetService("VirtualUser")
+local CollectionService = game:GetService("CollectionService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -37,7 +38,6 @@ local State = {
     CandyFarmEnabled = false,
     AntiAFKEnabled = false,
     ESPEnabled = false,
-    IsMinimized = false,
     IsClosed = false,
     CandyFarmThread = nil,
     AntiAFKThread = nil,
@@ -47,16 +47,13 @@ local State = {
     CurrentCharacter = nil,
 }
 
--- ============================================================
--- CHARACTER REFRESH
--- ============================================================
 State.CurrentCharacter = LocalPlayer.Character
 LocalPlayer.CharacterAdded:Connect(function(character)
     State.CurrentCharacter = character
 end)
 
 -- ============================================================
--- GUI ROOT (high DisplayOrder so it's above game UI)
+-- SCREEN GUI (high DisplayOrder, above game UI)
 -- ============================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MM2_Automation_Hub"
@@ -66,7 +63,7 @@ ScreenGui.DisplayOrder = 999
 ScreenGui.Parent = PlayerGui
 
 -- ============================================================
--- MINIMIZE ICON (created EARLY so it always exists)
+-- MINIMIZE ICON (created first so it always exists)
 -- ============================================================
 local MiniIcon = Instance.new("TextButton")
 MiniIcon.Name = "MiniIcon"
@@ -83,14 +80,14 @@ MiniIcon.ZIndex = 999
 MiniIcon.Active = true
 MiniIcon.Parent = ScreenGui
 
-local mc = Instance.new("UICorner")
-mc.CornerRadius = UDim.new(0, 8)
-mc.Parent = MiniIcon
+local MiniCorner = Instance.new("UICorner")
+MiniCorner.CornerRadius = UDim.new(0, 8)
+MiniCorner.Parent = MiniIcon
 
-local ms = Instance.new("UIStroke")
-ms.Color = Color3.fromRGB(80, 180, 100)
-ms.Thickness = 2
-ms.Parent = MiniIcon
+local MiniStroke = Instance.new("UIStroke")
+MiniStroke.Color = Color3.fromRGB(80, 180, 100)
+MiniStroke.Thickness = 2
+MiniStroke.Parent = MiniIcon
 
 -- ============================================================
 -- MAIN FRAME
@@ -192,7 +189,7 @@ CloseCorner.CornerRadius = UDim.new(0, 4)
 CloseCorner.Parent = CloseButton
 
 -- ============================================================
--- DRAG ZONE (left part of title bar)
+-- DRAG (left part of title bar only, buttons excluded)
 -- ============================================================
 local DragZone = Instance.new("Frame")
 DragZone.Name = "DragZone"
@@ -538,9 +535,9 @@ local function StartAntiAFK()
             task.wait(CONFIG.ANTI_AFK_INTERVAL)
             if State.IsClosed or not State.AntiAFKEnabled then break end
             pcall(function()
-                VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
                 task.wait(1)
-                VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
             end)
             print("[MM2] Anti-AFK pulse sent.")
         end
@@ -556,7 +553,7 @@ local function StopAntiAFK()
 end
 
 -- ============================================================
--- ROLE DETECTION
+-- ROLE DETECTION (Backpack + Character)
 -- ============================================================
 local function GetPlayerRole(player)
     if player == LocalPlayer then return nil end
@@ -593,7 +590,7 @@ local function GetPlayerRole(player)
 
     local tags = {}
     pcall(function()
-        for _, tag in ipairs(game:GetService("CollectionService"):GetTags(character)) do
+        for _, tag in ipairs(CollectionService:GetTags(character)) do
             table.insert(tags, tag:lower())
         end
     end)
@@ -709,7 +706,7 @@ local function TeleportToMurderer()
 end
 
 -- ============================================================
--- BUILD FARM TAB
+-- FARM TAB
 -- ============================================================
 local candyToggle, candyUpdater = CreateToggle(
     FarmTab, "🍬 Candy Auto Farm", false,
@@ -731,7 +728,7 @@ local antiAFKToggle, antiAFKUpdater = CreateToggle(
 antiAFKToggle.LayoutOrder = 2
 
 -- ============================================================
--- BUILD VISUALS TAB
+-- VISUALS TAB
 -- ============================================================
 local espToggle, espUpdater = CreateToggle(
     VisualsTab, "👁️ Role ESP", false,
@@ -784,7 +781,7 @@ MakeLegendRow(28, ESP_COLORS.Sheriff, "Sheriff")
 MakeLegendRow(48, ESP_COLORS.Innocent, "Innocent")
 
 -- ============================================================
--- BUILD MURDERER TAB
+-- MURDERER TAB
 -- ============================================================
 local tpFrame = Instance.new("Frame")
 tpFrame.Size = UDim2.new(1, -8, 0, 45)
@@ -819,4 +816,51 @@ tpButton.MouseButton1Click:Connect(function()
 end)
 
 local murdererPlaceholder = CreatePlaceholder(MurdererTab, "Скоро... (функции для убийцы)")
-murdererPlace
+murdererPlaceholder.LayoutOrder = 2
+
+-- ============================================================
+-- SHERIFF TAB
+-- ============================================================
+local sheriffPlaceholder = CreatePlaceholder(SheriffTab, "Скоро... (функции для шерифа)")
+sheriffPlaceholder.LayoutOrder = 1
+
+-- ============================================================
+-- MIN / CLOSE HANDLERS (at the end, all refs exist)
+-- ============================================================
+MinButton.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    MainFrame.Visible = false
+    MiniIcon.Visible = true
+end)
+
+MiniIcon.MouseButton1Click:Connect(function()
+    if State.IsClosed then return end
+    MainFrame.Visible = true
+    MiniIcon.Visible = false
+end)
+
+CloseButton.MouseButton1Click:Connect(function()
+    State.IsClosed = true
+    StopCandyFarm()
+    StopAntiAFK()
+    StopESP()
+    if candyUpdater then candyUpdater(false) end
+    if antiAFKUpdater then antiAFKUpdater(false) end
+    if espUpdater then espUpdater(false) end
+    ClearAllHighlights()
+    ScreenGui:Destroy()
+    local character = State.CurrentCharacter or LocalPlayer.Character
+    if character then
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+    end
+end)
+
+SetActiveTab("Farm")
+
+print("[MM2 Automation] Script loaded. All functions ready.")
