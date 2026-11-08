@@ -21,7 +21,7 @@ local CONFIG = {
     CANDY_SEARCH_RADIUS = 300,
     ANTI_AFK_INTERVAL = 600,
     MAX_CANDY_LIMIT = 200,
-    LOBBY_POSITION = Vector3.new(0, 10, 0),
+    LOBBY_POSITION = Vector3.new(0, 50, 0), -- fallback safe point
     ESP_UPDATE_INTERVAL = 0.5,
     COLLECT_NUDGE_DURATION = 0.15,
 }
@@ -49,16 +49,13 @@ local State = {
     CurrentCharacter = nil,
 }
 
--- ============================================================
--- CHARACTER REFRESH (basic — restart added at the end)
--- ============================================================
 State.CurrentCharacter = LocalPlayer.Character
 LocalPlayer.CharacterAdded:Connect(function(character)
     State.CurrentCharacter = character
 end)
 
 -- ============================================================
--- GUI (Modern Interface)
+-- GUI
 -- ============================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MM2_Automation_Hub"
@@ -226,7 +223,7 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
 end
 
 -- ============================================================
--- CANDY FARM (fixed: returns two values, per-iteration pcall)
+-- CANDY FARM (safe teleport, no fling)
 -- ============================================================
 local function GetAllCandies()
     local character = State.CurrentCharacter or LocalPlayer.Character
@@ -258,6 +255,33 @@ local function GetRandomCandy()
     return candies[math.random(1, #candies)]
 end
 
+local function GetSafeSpawnPosition()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("SpawnLocation") and obj.Enabled then
+            return obj.Position + Vector3.new(0, 5, 0)
+        end
+    end
+    return CONFIG.LOBBY_POSITION
+end
+
+local function IsCharacterSafe(character)
+    if not character then return false end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+    if rootPart.Position.Y < -50 then return false end
+    return true
+end
+
+local function EmergencyTeleport()
+    local character = State.CurrentCharacter or LocalPlayer.Character
+    if not character then return end
+    pcall(function()
+        character:PivotTo(CFrame.new(GetSafeSpawnPosition()))
+    end)
+end
+
 local function TeleportToAndCollect(targetPart)
     local character = State.CurrentCharacter or LocalPlayer.Character
     if not character then return false, false end
@@ -267,20 +291,33 @@ local function TeleportToAndCollect(targetPart)
     if not targetPart or not targetPart.Parent then
         return false, false
     end
+    if targetPart.Position.Y < -50 or targetPart.Position.Y > 500 then
+        return false, false
+    end
 
     local ok = pcall(function()
-        character:PivotTo(CFrame.new(targetPart.Position + Vector3.new(0, 2, 0)))
+        character:PivotTo(CFrame.new(targetPart.Position))
     end)
-    if not ok then return false, false end
+    if not ok then
+        EmergencyTeleport()
+        return false, false
+    end
+
+    task.wait(0.15)
+    if not IsCharacterSafe(character) then
+        EmergencyTeleport()
+        return false, false
+    end
 
     local origCollide = rootPart.CanCollide
     rootPart.CanCollide = true
     task.wait(CONFIG.COLLECT_NUDGE_DURATION)
-    pcall(function()
-        rootPart.CFrame = rootPart.CFrame * CFrame.new(0, -1, 0)
-    end)
-    task.wait(0.2)
     rootPart.CanCollide = origCollide
+
+    if not IsCharacterSafe(character) then
+        EmergencyTeleport()
+        return false, false
+    end
 
     local collected = (targetPart.Parent == nil)
         or (targetPart.Transparency >= 1)
@@ -290,11 +327,7 @@ local function TeleportToAndCollect(targetPart)
 end
 
 local function TeleportToLobby()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if not character then return end
-    pcall(function()
-        character:PivotTo(CFrame.new(CONFIG.LOBBY_POSITION))
-    end)
+    EmergencyTeleport()
 end
 
 local function StartCandyFarm()
@@ -363,7 +396,7 @@ local function StopCandyFarm()
 end
 
 -- ============================================================
--- ANTI-AFK (VirtualUser)
+-- ANTI-AFK
 -- ============================================================
 local function StartAntiAFK()
     if State.AntiAFKThread then task.cancel(State.AntiAFKThread) end
@@ -390,7 +423,7 @@ local function StopAntiAFK()
 end
 
 -- ============================================================
--- ROLE DETECTION (Backpack + Character)
+-- ROLE DETECTION
 -- ============================================================
 local function GetPlayerRole(player)
     if player == LocalPlayer then return nil end
@@ -652,7 +685,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 40)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nSurvives round changes."
+InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nSurvives round changes. Safe teleport."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -765,7 +798,6 @@ end)
 
 -- ============================================================
 -- CHARACTER RESPAWN → RESTART CANDY FARM THREAD
--- (placed at end so StartCandyFarm is already defined)
 -- ============================================================
 LocalPlayer.CharacterAdded:Connect(function(character)
     State.CurrentCharacter = character
@@ -777,4 +809,4 @@ LocalPlayer.CharacterAdded:Connect(function(character)
     end
 end)
 
-print("[MM2 Automation] Script loaded. (Candy Farm survives round changes)")
+print("[MM2 Automation] Script loaded. (Safe teleport, survives rounds)")
