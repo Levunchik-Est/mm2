@@ -21,9 +21,10 @@ local CONFIG = {
     CANDY_SEARCH_RADIUS = 300,
     ANTI_AFK_INTERVAL = 600,
     MAX_CANDY_LIMIT = 200,
-    LOBBY_POSITION = Vector3.new(0, 50, 0), -- fallback safe point
+    LOBBY_POSITION = Vector3.new(0, 50, 0),
     ESP_UPDATE_INTERVAL = 0.5,
     COLLECT_NUDGE_DURATION = 0.15,
+    ROUND_CHECK_INTERVAL = 1.0,
 }
 
 local ESP_COLORS = {
@@ -223,7 +224,7 @@ local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
 end
 
 -- ============================================================
--- CANDY FARM (safe teleport, no fling)
+-- CANDY FARM
 -- ============================================================
 local function GetAllCandies()
     local character = State.CurrentCharacter or LocalPlayer.Character
@@ -255,15 +256,6 @@ local function GetRandomCandy()
     return candies[math.random(1, #candies)]
 end
 
-local function GetSafeSpawnPosition()
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("SpawnLocation") and obj.Enabled then
-            return obj.Position + Vector3.new(0, 5, 0)
-        end
-    end
-    return CONFIG.LOBBY_POSITION
-end
-
 local function IsCharacterSafe(character)
     if not character then return false end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -274,12 +266,44 @@ local function IsCharacterSafe(character)
     return true
 end
 
+local function GetSafeSpawnPosition()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("SpawnLocation") and obj.Enabled and obj.Position.Y > -50 then
+            return obj.Position + Vector3.new(0, 5, 0)
+        end
+    end
+    return nil
+end
+
 local function EmergencyTeleport()
     local character = State.CurrentCharacter or LocalPlayer.Character
     if not character then return end
-    pcall(function()
-        character:PivotTo(CFrame.new(GetSafeSpawnPosition()))
-    end)
+    local safePos = GetSafeSpawnPosition()
+    if safePos then
+        pcall(function()
+            character:PivotTo(CFrame.new(safePos))
+        end)
+    else
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        if rootPart then
+            pcall(function()
+                rootPart.AssemblyLinearVelocity = Vector3.zero
+                rootPart.AssemblyAngularVelocity = Vector3.zero
+            end)
+        end
+    end
+end
+
+local function IsRoundActive()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            local n = obj.Name:lower()
+            if n:find("candy") or n:find("coin") then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function TeleportToAndCollect(targetPart)
@@ -292,6 +316,11 @@ local function TeleportToAndCollect(targetPart)
         return false, false
     end
     if targetPart.Position.Y < -50 or targetPart.Position.Y > 500 then
+        return false, false
+    end
+
+    if not IsCharacterSafe(character) then
+        EmergencyTeleport()
         return false, false
     end
 
@@ -350,6 +379,18 @@ local function StartCandyFarm()
                 local rootPart = character:FindFirstChild("HumanoidRootPart")
                 if not rootPart then
                     task.wait(0.5)
+                    return
+                end
+
+                if not IsRoundActive() then
+                    stuckTimer = 0
+                    task.wait(CONFIG.ROUND_CHECK_INTERVAL)
+                    return
+                end
+
+                if not IsCharacterSafe(character) then
+                    EmergencyTeleport()
+                    task.wait(1)
                     return
                 end
 
@@ -685,7 +726,7 @@ local InfoLabel = Instance.new("TextLabel")
 InfoLabel.Size = UDim2.new(1, 0, 0, 40)
 InfoLabel.Position = UDim2.new(0, 0, 0, 300)
 InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nSurvives round changes. Safe teleport."
+InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nWaits in lobby, safe teleport."
 InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
 InfoLabel.TextSize = 11
 InfoLabel.Font = Enum.Font.Gotham
@@ -809,4 +850,4 @@ LocalPlayer.CharacterAdded:Connect(function(character)
     end
 end)
 
-print("[MM2 Automation] Script loaded. (Safe teleport, survives rounds)")
+print("[MM2 Automation] Script loaded. (Waits in lobby, safe teleport)")
