@@ -1,5 +1,5 @@
 -- ============================================================
--- MM2 Automation Hub (final — min/close handlers at the end)
+-- MM2 Automation Hub (final — icon created early, high DisplayOrder)
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -56,18 +56,49 @@ LocalPlayer.CharacterAdded:Connect(function(character)
 end)
 
 -- ============================================================
--- GUI ROOT
+-- GUI ROOT (high DisplayOrder so it's above game UI)
 -- ============================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "MM2_Automation_Hub"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.DisplayOrder = 999
 ScreenGui.Parent = PlayerGui
 
+-- ============================================================
+-- MINIMIZE ICON (created EARLY so it always exists)
+-- ============================================================
+local MiniIcon = Instance.new("TextButton")
+MiniIcon.Name = "MiniIcon"
+MiniIcon.Size = UDim2.new(0, 50, 0, 50)
+MiniIcon.Position = UDim2.new(0, 50, 0, 50)
+MiniIcon.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+MiniIcon.BorderSizePixel = 0
+MiniIcon.Text = "M"
+MiniIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+MiniIcon.TextSize = 20
+MiniIcon.Font = Enum.Font.GothamBold
+MiniIcon.Visible = false
+MiniIcon.ZIndex = 999
+MiniIcon.Active = true
+MiniIcon.Parent = ScreenGui
+
+local mc = Instance.new("UICorner")
+mc.CornerRadius = UDim.new(0, 8)
+mc.Parent = MiniIcon
+
+local ms = Instance.new("UIStroke")
+ms.Color = Color3.fromRGB(80, 180, 100)
+ms.Thickness = 2
+ms.Parent = MiniIcon
+
+-- ============================================================
+-- MAIN FRAME
+-- ============================================================
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 300, 0, 400)
-MainFrame.Position = UDim2.new(0, 50, 0, 50)
+MainFrame.Position = UDim2.new(0, 50, 0, 110)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -161,7 +192,7 @@ CloseCorner.CornerRadius = UDim.new(0, 4)
 CloseCorner.Parent = CloseButton
 
 -- ============================================================
--- DRAG ZONE (left part of title bar, doesn't touch buttons)
+-- DRAG ZONE (left part of title bar)
 -- ============================================================
 local DragZone = Instance.new("Frame")
 DragZone.Name = "DragZone"
@@ -788,79 +819,4 @@ tpButton.MouseButton1Click:Connect(function()
 end)
 
 local murdererPlaceholder = CreatePlaceholder(MurdererTab, "Скоро... (функции для убийцы)")
-murdererPlaceholder.LayoutOrder = 2
-
--- ============================================================
--- BUILD SHERIFF TAB
--- ============================================================
-local sheriffPlaceholder = CreatePlaceholder(SheriffTab, "Скоро... (функции для шерифа)")
-sheriffPlaceholder.LayoutOrder = 1
-
--- ============================================================
--- MINIMIZE ICON
--- ============================================================
-local MiniIcon = Instance.new("TextButton")
-MiniIcon.Name = "MiniIcon"
-MiniIcon.Size = UDim2.new(0, 40, 0, 40)
-MiniIcon.Position = UDim2.new(0, 50, 0, 50)
-MiniIcon.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-MiniIcon.BorderSizePixel = 0
-MiniIcon.Text = "M"
-MiniIcon.TextColor3 = Color3.fromRGB(220, 220, 230)
-MiniIcon.TextSize = 16
-MiniIcon.Font = Enum.Font.GothamBold
-MiniIcon.Visible = false
-MiniIcon.ZIndex = 20
-MiniIcon.Parent = ScreenGui
-
-local mc = Instance.new("UICorner")
-mc.CornerRadius = UDim.new(0, 8)
-mc.Parent = MiniIcon
-
-local ms = Instance.new("UIStroke")
-ms.Color = Color3.fromRGB(80, 180, 100)
-ms.Thickness = 2
-ms.Parent = MiniIcon
-
--- ============================================================
--- MIN / CLOSE HANDLERS (placed at end, after all refs exist)
--- ============================================================
-MinButton.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    State.IsMinimized = true
-    MainFrame.Visible = false
-    MiniIcon.Visible = true
-end)
-
-MiniIcon.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    State.IsMinimized = false
-    MainFrame.Visible = true
-    MiniIcon.Visible = false
-end)
-
-CloseButton.MouseButton1Click:Connect(function()
-    State.IsClosed = true
-    StopCandyFarm()
-    StopAntiAFK()
-    StopESP()
-    if candyUpdater then candyUpdater(false) end
-    if antiAFKUpdater then antiAFKUpdater(false) end
-    if espUpdater then espUpdater(false) end
-    ClearAllHighlights()
-    ScreenGui:Destroy()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if character then
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if root then
-            pcall(function()
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
-        end
-    end
-end)
-
-SetActiveTab("Farm")
-
-print("[MM2 Automation] Script loaded. Min/Close + icon restore ready.")
+murdererPlace
