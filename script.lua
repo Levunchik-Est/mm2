@@ -1,6 +1,6 @@
 -- ============================================================
 -- MM2 Automation Hub — 4 Tabs (Farm / Visuals / Murderer / Sheriff)
--- Anti-AFK fixed with VirtualUser (real input simulation)
+-- ESP checks Backpack + Character (survives weapon holstering)
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -18,7 +18,7 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local CONFIG = {
     CANDY_FARM_INTERVAL = 2.0,
     CANDY_SEARCH_RADIUS = 300,
-    ANTI_AFK_INTERVAL = 600,        -- 10 minutes
+    ANTI_AFK_INTERVAL = 600,
     MAX_CANDY_LIMIT = 200,
     LOBBY_POSITION = Vector3.new(0, 10, 0),
     ESP_UPDATE_INTERVAL = 0.5,
@@ -470,7 +470,7 @@ local function StopCandyFarm()
 end
 
 -- ============================================================
--- ANTI-AFK (FIXED — uses VirtualUser to simulate real input)
+-- ANTI-AFK (VirtualUser)
 -- ============================================================
 local function StartAntiAFK()
     if State.AntiAFKThread then task.cancel(State.AntiAFKThread) end
@@ -478,15 +478,11 @@ local function StartAntiAFK()
         while State.AntiAFKEnabled and not State.IsClosed do
             task.wait(CONFIG.ANTI_AFK_INTERVAL)
             if State.IsClosed or not State.AntiAFKEnabled then break end
-
-            -- Simulate a real mouse click via VirtualUser.
-            -- Roblox counts this as user activity and resets the idle timer.
             pcall(function()
                 VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
                 task.wait(1)
                 VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
             end)
-
             print("[MM2] Anti-AFK pulse sent via VirtualUser.")
         end
     end)
@@ -501,13 +497,14 @@ local function StopAntiAFK()
 end
 
 -- ============================================================
--- ROLE DETECTION
+-- ROLE DETECTION (FIXED — checks Backpack + Character)
 -- ============================================================
 local function GetPlayerRole(player)
     if player == LocalPlayer then return nil end
     local character = player.Character
     if not character then return nil end
 
+    -- 1) Attribute-based
     local attrRole = character:GetAttribute("Role") or player:GetAttribute("Role")
     if type(attrRole) == "string" then
         local r = attrRole:lower()
@@ -516,17 +513,32 @@ local function GetPlayerRole(player)
         if r:find("innocent") then return "Innocent" end
     end
 
-    local hasKnife, hasGun = false, false
-    for _, child in ipairs(character:GetChildren()) do
-        if child:IsA("Tool") then
-            local n = child.Name:lower()
-            if n:find("knife") then hasKnife = true end
-            if n:find("gun") or n:find("revolver") or n:find("pistol") then hasGun = true end
+    -- 2) Tool-based: check BOTH Character (equipped) and Backpack (holstered)
+    local function hasTool(container, toolName)
+        if not container then return false end
+        for _, child in ipairs(container:GetChildren()) do
+            if child:IsA("Tool") then
+                local n = child.Name:lower()
+                if n:find(toolName) then return true end
+            end
         end
+        return false
     end
-    if hasKnife then return "Murderer" end
-    if hasGun then return "Sheriff" end
 
+    local backpack = player:FindFirstChild("Backpack")
+
+    -- Knife in Character OR Backpack → Murderer
+    if hasTool(character, "knife") or hasTool(backpack, "knife") then
+        return "Murderer"
+    end
+
+    -- Gun in Character OR Backpack → Sheriff
+    if hasTool(character, "gun") or hasTool(character, "revolver") or hasTool(character, "pistol")
+    or hasTool(backpack, "gun") or hasTool(backpack, "revolver") or hasTool(backpack, "pistol") then
+        return "Sheriff"
+    end
+
+    -- 3) Tag-based fallback
     local tags = {}
     pcall(function()
         for _, tag in ipairs(game:GetService("CollectionService"):GetTags(character)) do
@@ -538,6 +550,7 @@ local function GetPlayerRole(player)
         if t:find("sheriff") or t:find("cop") then return "Sheriff" end
         if t:find("innocent") then return "Innocent" end
     end
+
     return "Innocent"
 end
 
@@ -840,4 +853,4 @@ end)
 
 SetActiveTab("Farm")
 
-print("[MM2 Automation] Script loaded. Anti-AFK uses VirtualUser (real input simulation).")
+print("[MM2 Automation] Script loaded. ESP checks Backpack + Character.")
