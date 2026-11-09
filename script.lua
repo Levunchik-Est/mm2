@@ -1,862 +1,751 @@
--- ============================================================
--- MM2 Candy Farm & Anti-AFK & Role ESP & TP to Murderer
--- Requirements: Executor with LocalScript execution capability
--- ============================================================
+--[[
+    MM2 GUI — Murder Mystery 2
+    Полный клиентский скрипт для executor.
+    Все функции из ТЗ реализованы в меру возможностей клиента.
+    Функции, требующие серверного доступа, помечены в комментариях.
+]]
 
+-- ============================================================
+-- СЕРВИСЫ
+-- ============================================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 local VirtualUser = game:GetService("VirtualUser")
-local CollectionService = game:GetService("CollectionService")
+local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Camera = Workspace.CurrentCamera
 
 -- ============================================================
--- CONFIGURATION
--- ============================================================
-local CONFIG = {
-    CANDY_FARM_INTERVAL = 2.0,
-    CANDY_SEARCH_RADIUS = 300,
-    ANTI_AFK_INTERVAL = 600,
-    MAX_CANDY_LIMIT = 200,
-    LOBBY_POSITION = Vector3.new(0, 50, 0),
-    ESP_UPDATE_INTERVAL = 0.5,
-    COLLECT_NUDGE_DURATION = 0.15,
-    ROUND_CHECK_INTERVAL = 1.0,
-}
-
-local ESP_COLORS = {
-    Murderer = Color3.fromRGB(255, 0, 0),
-    Sheriff  = Color3.fromRGB(0, 120, 255),
-    Innocent = Color3.fromRGB(0, 220, 80),
-}
-
--- ============================================================
--- STATE
+-- ГЛОБАЛЬНОЕ СОСТОЯНИЕ (единая точка управления)
 -- ============================================================
 local State = {
-    CandyFarmEnabled = false,
-    AntiAFKEnabled = false,
-    ESPEnabled = false,
-    IsMinimized = false,
-    IsClosed = false,
-    CandyFarmThread = nil,
-    AntiAFKThread = nil,
-    ESPThread = nil,
-    CandyCount = 0,
-    ESPHighlights = {},
-    CurrentCharacter = nil,
+    -- Farm
+    AutoFarm = false,
+    FarmMode = "Fly — лежа",     -- "Fly — лежа" | "Fly — стоя" | "Teleport" | "Underground Teleport"
+    FarmSpeed = 35,
+    FarmOrder = "Nearest Item",   -- "Nearest Item" | "Random Item"
+    AntiAFK = false,
+    -- Visuals
+    ESPRoles = false,
+    ShowNicknames = false,
+    -- Sheriff
+    AimAssist = false,
+    -- Murderer
+    -- (нет постоянных состояний, только кнопки)
+    -- Fun
+    -- (нет постоянных состояний, только кнопки)
+    
+    -- Внутренние
+    _connections = {},
+    _espObjects = {},
+    _nicknameObjects = {},
+    _farmRunning = false,
+    _antiAFKLoop = nil,
+    _aimAssistConn = nil,
+    _flingRunning = false,
 }
 
-State.CurrentCharacter = LocalPlayer.Character
-LocalPlayer.CharacterAdded:Connect(function(character)
-    State.CurrentCharacter = character
-end)
+-- Список всех созданных объектов GUI для полной очистки
+local GUIObjects = {}
 
--- ============================================================
--- GUI
--- ============================================================
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "MM2_Automation_Hub"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = PlayerGui
-
-local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 280, 0, 430)
-MainFrame.Position = UDim2.new(0, 50, 0, 50)
-MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = false
-MainFrame.ZIndex = 1
-MainFrame.Parent = ScreenGui
-
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 8)
-MainCorner.Parent = MainFrame
-
-local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(60, 60, 70)
-MainStroke.Thickness = 1
-MainStroke.Parent = MainFrame
-
-local TitleBar = Instance.new("Frame")
-TitleBar.Name = "TitleBar"
-TitleBar.Size = UDim2.new(1, 0, 0, 35)
-TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-TitleBar.BorderSizePixel = 0
-TitleBar.Active = true
-TitleBar.ZIndex = 10
-TitleBar.Parent = MainFrame
-
-local TitleCorner = Instance.new("UICorner")
-TitleCorner.CornerRadius = UDim.new(0, 8)
-TitleCorner.Parent = TitleBar
-
-local TitleBarFix = Instance.new("Frame")
-TitleBarFix.Size = UDim2.new(1, 0, 0, 10)
-TitleBarFix.Position = UDim2.new(0, 0, 1, -10)
-TitleBarFix.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-TitleBarFix.BorderSizePixel = 0
-TitleBarFix.ZIndex = 10
-TitleBarFix.Parent = TitleBar
-
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -70, 1, 0)
-TitleLabel.Position = UDim2.new(0, 10, 0, 0)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "MM2 Automation"
-TitleLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
-TitleLabel.TextSize = 14
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.ZIndex = 11
-TitleLabel.Parent = TitleBar
-
-local MinButton = Instance.new("TextButton")
-MinButton.Size = UDim2.new(0, 30, 0, 30)
-MinButton.Position = UDim2.new(1, -65, 0, 2)
-MinButton.BackgroundTransparency = 1
-MinButton.Text = "−"
-MinButton.TextColor3 = Color3.fromRGB(180, 180, 190)
-MinButton.TextSize = 20
-MinButton.Font = Enum.Font.GothamBold
-MinButton.Parent = TitleBar
-
-local CloseButton = Instance.new("TextButton")
-CloseButton.Size = UDim2.new(0, 30, 0, 30)
-CloseButton.Position = UDim2.new(1, -35, 0, 2)
-CloseButton.BackgroundTransparency = 1
-CloseButton.Text = "X"
-CloseButton.TextColor3 = Color3.fromRGB(255, 100, 100)
-CloseButton.TextSize = 16
-CloseButton.Font = Enum.Font.GothamBold
-CloseButton.Parent = TitleBar
-
-local ContentFrame = Instance.new("Frame")
-ContentFrame.Name = "ContentFrame"
-ContentFrame.Size = UDim2.new(1, -20, 1, -50)
-ContentFrame.Position = UDim2.new(0, 10, 0, 45)
-ContentFrame.BackgroundTransparency = 1
-ContentFrame.Parent = MainFrame
-
--- ============================================================
--- TOGGLE HELPER
--- ============================================================
-local function CreateToggle(parent, yOffset, labelText, initialValue, callback)
-    local ToggleFrame = Instance.new("Frame")
-    ToggleFrame.Size = UDim2.new(1, 0, 0, 45)
-    ToggleFrame.Position = UDim2.new(0, 0, 0, yOffset)
-    ToggleFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-    ToggleFrame.BorderSizePixel = 0
-    ToggleFrame.Parent = parent
-
-    local ToggleCorner = Instance.new("UICorner")
-    ToggleCorner.CornerRadius = UDim.new(0, 6)
-    ToggleCorner.Parent = ToggleFrame
-
-    local Label = Instance.new("TextLabel")
-    Label.Size = UDim2.new(1, -70, 1, 0)
-    Label.Position = UDim2.new(0, 12, 0, 0)
-    Label.BackgroundTransparency = 1
-    Label.Text = labelText
-    Label.TextColor3 = Color3.fromRGB(200, 200, 210)
-    Label.TextSize = 13
-    Label.Font = Enum.Font.Gotham
-    Label.TextXAlignment = Enum.TextXAlignment.Left
-    Label.Parent = ToggleFrame
-
-    local SwitchBg = Instance.new("Frame")
-    SwitchBg.Size = UDim2.new(0, 44, 0, 24)
-    SwitchBg.Position = UDim2.new(1, -56, 0.5, -12)
-    SwitchBg.BackgroundColor3 = initialValue and Color3.fromRGB(80, 180, 100) or Color3.fromRGB(70, 70, 78)
-    SwitchBg.BorderSizePixel = 0
-    SwitchBg.Parent = ToggleFrame
-
-    local SwitchCorner = Instance.new("UICorner")
-    SwitchCorner.CornerRadius = UDim.new(1, 0)
-    SwitchCorner.Parent = SwitchBg
-
-    local Knob = Instance.new("Frame")
-    Knob.Size = UDim2.new(0, 18, 0, 18)
-    Knob.Position = initialValue and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-    Knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    Knob.BorderSizePixel = 0
-    Knob.Parent = SwitchBg
-
-    local KnobCorner = Instance.new("UICorner")
-    KnobCorner.CornerRadius = UDim.new(1, 0)
-    KnobCorner.Parent = Knob
-
-    local ClickArea = Instance.new("TextButton")
-    ClickArea.Size = UDim2.new(1, 0, 1, 0)
-    ClickArea.BackgroundTransparency = 1
-    ClickArea.Text = ""
-    ClickArea.Parent = ToggleFrame
-
-    local currentValue = initialValue
-
-    local function updateVisual(value)
-        if value then
-            SwitchBg.BackgroundColor3 = Color3.fromRGB(80, 180, 100)
-            Knob.Position = UDim2.new(1, -21, 0.5, -9)
-        else
-            SwitchBg.BackgroundColor3 = Color3.fromRGB(70, 70, 78)
-            Knob.Position = UDim2.new(0, 3, 0.5, -9)
-        end
-    end
-
-    ClickArea.MouseButton1Click:Connect(function()
-        if State.IsClosed then return end
-        currentValue = not currentValue
-        updateVisual(currentValue)
-        if callback then callback(currentValue) end
-    end)
-
-    return ToggleFrame, function(val)
-        currentValue = val
-        updateVisual(val)
-    end
+local function track(obj)
+    table.insert(GUIObjects, obj)
+    return obj
 end
 
 -- ============================================================
--- CANDY FARM
+-- УТИЛИТЫ
 -- ============================================================
-local function GetAllCandies()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if not character then return {} end
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return {} end
-
-    local candies = {}
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") or obj:IsA("Model") then
-            local name = obj.Name:lower()
-            if name:find("candy") or name:find("coin") then
-                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
-                if part and part.Transparency < 0.5 then
-                    local dist = (rootPart.Position - part.Position).Magnitude
-                    if dist <= CONFIG.CANDY_SEARCH_RADIUS then
-                        table.insert(candies, part)
-                    end
-                end
-            end
-        end
-    end
-    return candies
-end
-
-local function GetRandomCandy()
-    local candies = GetAllCandies()
-    if #candies == 0 then return nil end
-    return candies[math.random(1, #candies)]
-end
-
-local function IsCharacterSafe(character)
-    if not character then return false end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return false end
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return false end
-    if rootPart.Position.Y < -50 then return false end
-    return true
-end
-
-local function GetSafeSpawnPosition()
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("SpawnLocation") and obj.Enabled and obj.Position.Y > -50 then
-            return obj.Position + Vector3.new(0, 5, 0)
-        end
+local function getHRP(plr)
+    plr = plr or LocalPlayer
+    if plr.Character then
+        return plr.Character:FindFirstChild("HumanoidRootPart")
     end
     return nil
 end
 
-local function EmergencyTeleport()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if not character then return end
-    local safePos = GetSafeSpawnPosition()
-    if safePos then
-        pcall(function()
-            character:PivotTo(CFrame.new(safePos))
-        end)
-    else
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if rootPart then
-            pcall(function()
-                rootPart.AssemblyLinearVelocity = Vector3.zero
-                rootPart.AssemblyAngularVelocity = Vector3.zero
-            end)
-        end
+local function getHumanoid(plr)
+    plr = plr or LocalPlayer
+    if plr.Character then
+        return plr.Character:FindFirstChildOfClass("Humanoid")
     end
+    return nil
 end
 
-local function IsRoundActive()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if not character then return false end
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return false end
-
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") or obj:IsA("Model") then
-            local n = obj.Name:lower()
-            if n:find("candy") or n:find("coin") then
-                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart")
-                if part and part.Transparency < 0.5 then
-                    local dist = (rootPart.Position - part.Position).Magnitude
-                    if dist <= CONFIG.CANDY_SEARCH_RADIUS then
-                        return true
-                    end
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function TeleportToAndCollect(targetPart)
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if not character then return false, false end
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return false, false end
-
-    if not targetPart or not targetPart.Parent then
-        return false, false
-    end
-    if targetPart.Position.Y < -50 or targetPart.Position.Y > 500 then
-        return false, false
-    end
-
-    if not IsCharacterSafe(character) then
-        EmergencyTeleport()
-        return false, false
-    end
-
-    local ok = pcall(function()
-        character:PivotTo(CFrame.new(targetPart.Position))
-    end)
-    if not ok then
-        return false, false
-    end
-
-    task.wait(0.15)
-    if not IsCharacterSafe(character) then
-        EmergencyTeleport()
-        return false, false
-    end
-
-    local origCollide = rootPart.CanCollide
-    rootPart.CanCollide = true
-    task.wait(CONFIG.COLLECT_NUDGE_DURATION)
-    rootPart.CanCollide = origCollide
-
-    if not IsCharacterSafe(character) then
-        EmergencyTeleport()
-        return false, false
-    end
-
-    local collected = (targetPart.Parent == nil)
-        or (targetPart.Transparency >= 1)
-        or (not targetPart:IsDescendantOf(Workspace))
-
-    return true, collected
-end
-
-local function TeleportToLobby()
-    EmergencyTeleport()
-end
-
-local function StartCandyFarm()
-    if State.CandyFarmThread then
-        pcall(function() task.cancel(State.CandyFarmThread) end)
-    end
-    State.CandyCount = 0
-
-    State.CandyFarmThread = task.spawn(function()
-        local stuckTimer = 0
-
-        while State.CandyFarmEnabled and not State.IsClosed do
-            local ok, err = pcall(function()
-                local character = State.CurrentCharacter or LocalPlayer.Character
-                if not character then
-                    task.wait(1)
-                    return
-                end
-
-                local rootPart = character:FindFirstChild("HumanoidRootPart")
-                if not rootPart then
-                    task.wait(0.5)
-                    return
-                end
-
-                if not IsCharacterSafe(character) then
-                    EmergencyTeleport()
-                    task.wait(1)
-                    return
-                end
-
-                if not IsRoundActive() then
-                    stuckTimer = 0
-                    task.wait(CONFIG.ROUND_CHECK_INTERVAL)
-                    return
-                end
-
-                local candy = GetRandomCandy()
-                if candy then
-                    local teleported, collected = TeleportToAndCollect(candy)
-                    if teleported and collected then
-                        State.CandyCount = State.CandyCount + 1
-                        stuckTimer = 0
-                        if State.CandyCount >= CONFIG.MAX_CANDY_LIMIT then
-                            State.CandyFarmEnabled = false
-                            if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
-                            TeleportToLobby()
-                        end
-                    else
-                        stuckTimer = stuckTimer + 1
-                    end
-                else
-                    stuckTimer = stuckTimer + 1
-                end
-
-                if stuckTimer >= 5 then
-                    stuckTimer = 0
-                    task.wait(1)
-                end
-            end)
-
-            if not ok then
-                warn("[MM2 CandyFarm] iteration error: " .. tostring(err))
-            end
-
-            task.wait(CONFIG.CANDY_FARM_INTERVAL)
-        end
-    end)
-end
-
-local function StopCandyFarm()
-    State.CandyFarmEnabled = false
-    if State.CandyFarmThread then
-        pcall(function() task.cancel(State.CandyFarmThread) end)
-        State.CandyFarmThread = nil
-    end
-end
-
--- ============================================================
--- ANTI-AFK
--- ============================================================
-local function StartAntiAFK()
-    if State.AntiAFKThread then task.cancel(State.AntiAFKThread) end
-    State.AntiAFKThread = task.spawn(function()
-        while State.AntiAFKEnabled and not State.IsClosed do
-            task.wait(CONFIG.ANTI_AFK_INTERVAL)
-            if State.IsClosed or not State.AntiAFKEnabled then break end
-            pcall(function()
-                VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
-                task.wait(1)
-                VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
-            end)
-            print("[MM2] Anti-AFK pulse sent via VirtualUser.")
-        end
-    end)
-end
-
-local function StopAntiAFK()
-    State.AntiAFKEnabled = false
-    if State.AntiAFKThread then
-        task.cancel(State.AntiAFKThread)
-        State.AntiAFKThread = nil
-    end
-end
-
--- ============================================================
--- ROLE DETECTION
--- ============================================================
-local function GetPlayerRole(player)
-    if player == LocalPlayer then return nil end
-    local character = player.Character
-    if not character then return nil end
-
-    local attrRole = character:GetAttribute("Role") or player:GetAttribute("Role")
-    if type(attrRole) == "string" then
-        local r = attrRole:lower()
-        if r:find("murder") or r:find("killer") then return "Murderer" end
-        if r:find("sheriff") or r:find("cop") then return "Sheriff" end
-        if r:find("innocent") then return "Innocent" end
-    end
-
-    local function hasTool(container, toolName)
-        if not container then return false end
-        for _, child in ipairs(container:GetChildren()) do
-            if child:IsA("Tool") then
-                if child.Name:lower():find(toolName) then return true end
-            end
-        end
+-- Определение роли игрока (эвристика: Knife/Gun в Character или Backpack)
+local function getRole(plr)
+    if not plr or not plr.Character then return "Innocent" end
+    local char = plr.Character
+    local backpack = plr:FindFirstChild("Backpack")
+    
+    local function hasTool(name)
+        if char:FindFirstChild(name) then return true end
+        if backpack and backpack:FindFirstChild(name) then return true end
         return false
     end
-
-    local backpack = player:FindFirstChild("Backpack")
-
-    if hasTool(character, "knife") or hasTool(backpack, "knife") then
-        return "Murderer"
-    end
-    if hasTool(character, "gun") or hasTool(character, "revolver") or hasTool(character, "pistol")
-    or hasTool(backpack, "gun") or hasTool(backpack, "revolver") or hasTool(backpack, "pistol") then
-        return "Sheriff"
-    end
-
-    local tags = {}
-    pcall(function()
-        for _, tag in ipairs(CollectionService:GetTags(character)) do
-            table.insert(tags, tag:lower())
-        end
-    end)
-    for _, t in ipairs(tags) do
-        if t:find("murder") or t:find("killer") then return "Murderer" end
-        if t:find("sheriff") or t:find("cop") then return "Sheriff" end
-        if t:find("innocent") then return "Innocent" end
-    end
-
+    
+    if hasTool("Knife") then return "Murderer" end
+    if hasTool("Gun") then return "Sheriff" end
     return "Innocent"
 end
 
--- ============================================================
--- ESP
--- ============================================================
-local function ClearAllHighlights()
-    for _, hl in pairs(State.ESPHighlights) do
-        pcall(function() hl:Destroy() end)
-    end
-    State.ESPHighlights = {}
+local function roleColor(role)
+    if role == "Murderer" then return Color3.fromRGB(255, 60, 60) end
+    if role == "Sheriff" then return Color3.fromRGB(60, 120, 255) end
+    return Color3.fromRGB(80, 255, 80)
 end
 
-local function UpdateESP()
-    if State.IsClosed or not State.ESPEnabled then return end
-    for player, hl in pairs(State.ESPHighlights) do
-        if not player.Parent or not player.Character then
-            pcall(function() hl:Destroy() end)
-            State.ESPHighlights[player] = nil
-        end
-    end
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local role = GetPlayerRole(player)
-            if role then
-                local color = ESP_COLORS[role]
-                local existing = State.ESPHighlights[player]
-                if existing and existing.Parent then
-                    existing.FillColor = color
-                    existing.OutlineColor = color
-                else
-                    local hl = Instance.new("Highlight")
-                    hl.Name = "MM2_RoleESP_" .. player.Name
-                    hl.Adornee = player.Character
-                    hl.FillColor = color
-                    hl.FillTransparency = 0.6
-                    hl.OutlineColor = color
-                    hl.OutlineTransparency = 0
-                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    hl.Parent = player.Character
-                    State.ESPHighlights[player] = hl
-                end
-            else
-                local existing = State.ESPHighlights[player]
-                if existing then
-                    pcall(function() existing:Destroy() end)
-                    State.ESPHighlights[player] = nil
-                end
-            end
-        end
-    end
+-- Безопасное добавление Connection в State._connections
+local function trackConn(conn)
+    table.insert(State._connections, conn)
+    return conn
 end
 
-local function StartESP()
-    if State.ESPThread then task.cancel(State.ESPThread) end
-    State.ESPThread = task.spawn(function()
-        while State.ESPEnabled and not State.IsClosed do
-            UpdateESP()
-            task.wait(CONFIG.ESP_UPDATE_INTERVAL)
+-- Полная очистка всех соединений
+local function disconnectAll()
+    for _, conn in ipairs(State._connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    State._connections = {}
+end
+
+-- ============================================================
+-- БАЗОВЫЙ GUI (ScreenGui, Main Frame, TitleBar, Nav)
+-- ============================================================
+local screenGui = track(Instance.new("ScreenGui"))
+screenGui.Name = "MM2_GUI"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = CoreGui
+
+-- Плавающая иконка (для свёрнутого режима)
+local floatingIcon = track(Instance.new("TextButton"))
+floatingIcon.Name = "FloatingIcon"
+floatingIcon.Size = UDim2.new(0, 50, 0, 50)
+floatingIcon.Position = UDim2.new(0, 20, 0, 20)
+floatingIcon.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+floatingIcon.BackgroundTransparency = 0.15
+floatingIcon.BorderSizePixel = 0
+floatingIcon.Text = "M"
+floatingIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+floatingIcon.TextSize = 24
+floatingIcon.Font = Enum.Font.GothamBold
+floatingIcon.Visible = false
+floatingIcon.Parent = screenGui
+local iconCorner = track(Instance.new("UICorner"))
+iconCorner.CornerRadius = UDim.new(0, 12)
+iconCorner.Parent = floatingIcon
+
+-- Главное окно
+local mainFrame = track(Instance.new("Frame"))
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 520, 0, 380)
+mainFrame.Position = UDim2.new(0.5, -260, 0.5, -190)
+mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+local mainCorner = track(Instance.new("UICorner"))
+mainCorner.CornerRadius = UDim.new(0, 10)
+mainCorner.Parent = mainFrame
+
+-- Заголовок (для перетаскивания)
+local titleBar = track(Instance.new("Frame"))
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleLabel = track(Instance.new("TextLabel"))
+titleLabel.Size = UDim2.new(1, -100, 1, 0)
+titleLabel.Position = UDim2.new(0, 12, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "MM2 GUI"
+titleLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+titleLabel.TextSize = 16
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+-- Кнопка "−" (свернуть)
+local minimizeBtn = track(Instance.new("TextButton"))
+minimizeBtn.Size = UDim2.new(0, 32, 0, 32)
+minimizeBtn.Position = UDim2.new(1, -76, 0, 4)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Text = "−"
+minimizeBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+minimizeBtn.TextSize = 20
+minimizeBtn.Font = Enum.Font.GothamBold
+minimizeBtn.Parent = titleBar
+local minCorner = track(Instance.new("UICorner"))
+minCorner.CornerRadius = UDim.new(0, 6)
+minCorner.Parent = minimizeBtn
+
+-- Кнопка "X" (закрыть)
+local closeBtn = track(Instance.new("TextButton"))
+closeBtn.Size = UDim2.new(0, 32, 0, 32)
+closeBtn.Position = UDim2.new(1, -40, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 14
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Parent = titleBar
+local closeCorner = track(Instance.new("UICorner"))
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+-- ============================================================
+-- НАВИГАЦИЯ (5 категорий)
+-- ============================================================
+local navBar = track(Instance.new("Frame"))
+navBar.Name = "NavBar"
+navBar.Size = UDim2.new(0, 130, 1, -40)
+navBar.Position = UDim2.new(0, 0, 0, 40)
+navBar.BackgroundColor3 = Color3.fromRGB(26, 26, 36)
+navBar.BorderSizePixel = 0
+navBar.Parent = mainFrame
+
+local navLayout = track(Instance.new("UIListLayout"))
+navLayout.SortOrder = Enum.SortOrder.LayoutOrder
+navLayout.Padding = UDim.new(0, 4)
+navLayout.Parent = navBar
+
+local navPadding = track(Instance.new("UIPadding"))
+navPadding.PaddingTop = UDim.new(0, 8)
+navPadding.PaddingLeft = UDim.new(0, 8)
+navPadding.PaddingRight = UDim.new(0, 8)
+navPadding.Parent = navBar
+
+-- Контентная область
+local contentArea = track(Instance.new("Frame"))
+contentArea.Name = "ContentArea"
+contentArea.Size = UDim2.new(1, -138, 1, -48)
+contentArea.Position = UDim2.new(0, 138, 0, 44)
+contentArea.BackgroundTransparency = 1
+contentArea.Parent = mainFrame
+
+-- Контейнеры для каждой категории
+local categories = {}
+local categoryNames = {"Farm", "Visuals", "Sheriff", "Murderer", "Fun"}
+
+for i, name in ipairs(categoryNames) do
+    local btn = track(Instance.new("TextButton"))
+    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.BackgroundColor3 = Color3.fromRGB(36, 36, 50)
+    btn.BorderSizePixel = 0
+    btn.Text = name
+    btn.TextColor3 = Color3.fromRGB(190, 190, 200)
+    btn.TextSize = 14
+    btn.Font = Enum.Font.Gotham
+    btn.Parent = navBar
+    local c = track(Instance.new("UICorner"))
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = btn
+
+    local container = track(Instance.new("ScrollingFrame"))
+    container.Name = name .. "Content"
+    container.Size = UDim2.new(1, 0, 1, 0)
+    container.Position = UDim2.new(0, 0, 0, 0)
+    container.BackgroundTransparency = 1
+    container.BorderSizePixel = 0
+    container.ScrollBarThickness = 4
+    container.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 100)
+    container.Visible = (i == 1)
+    container.Parent = contentArea
+
+    local layout = track(Instance.new("UIListLayout"))
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 8)
+    layout.Parent = container
+
+    local pad = track(Instance.new("UIPadding"))
+    pad.PaddingTop = UDim.new(0, 4)
+    pad.PaddingLeft = UDim.new(0, 4)
+    pad.PaddingRight = UDim.new(0, 8)
+    pad.Parent = container
+
+    categories[name] = {button = btn, container = container}
+
+    btn.MouseButton1Click:Connect(function()
+        for _, cat in pairs(categories) do
+            cat.container.Visible = false
+            cat.button.BackgroundColor3 = Color3.fromRGB(36, 36, 50)
+            cat.button.TextColor3 = Color3.fromRGB(190, 190, 200)
         end
+        container.Visible = true
+        btn.BackgroundColor3 = Color3.fromRGB(55, 55, 78)
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     end)
 end
 
-local function StopESP()
-    State.ESPEnabled = false
-    if State.ESPThread then
-        task.cancel(State.ESPThread)
-        State.ESPThread = nil
+-- Выделить первую категорию
+categories["Farm"].button.BackgroundColor3 = Color3.fromRGB(55, 55, 78)
+categories["Farm"].button.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+-- ============================================================
+-- ФАБРИКИ UI-ЭЛЕМЕНТОВ
+-- ============================================================
+local function createToggle(parent, text, default, callback)
+    local frame = track(Instance.new("Frame"))
+    frame.Size = UDim2.new(1, 0, 0, 32)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
+
+    local label = track(Instance.new("TextLabel"))
+    label.Size = UDim2.new(1, -60, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(210, 210, 220)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local switch = track(Instance.new("TextButton"))
+    switch.Size = UDim2.new(0, 44, 0, 22)
+    switch.Position = UDim2.new(1, -44, 0.5, -11)
+    switch.BackgroundColor3 = default and Color3.fromRGB(60, 180, 80) or Color3.fromRGB(55, 55, 70)
+    switch.BorderSizePixel = 0
+    switch.Text = ""
+    switch.Parent = frame
+    local sc = track(Instance.new("UICorner"))
+    sc.CornerRadius = UDim.new(1, 0)
+    sc.Parent = switch
+
+    local knob = track(Instance.new("Frame"))
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = default and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.Parent = switch
+    local kc = track(Instance.new("UICorner"))
+    kc.CornerRadius = UDim.new(1, 0)
+    kc.Parent = knob
+
+    local state = default
+    local function setState(newState)
+        state = newState
+        TweenService:Create(switch, TweenInfo.new(0.2), {
+            BackgroundColor3 = state and Color3.fromRGB(60, 180, 80) or Color3.fromRGB(55, 55, 70)
+        }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.2), {
+            Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
+        }):Play()
+        callback(state)
     end
-    ClearAllHighlights()
+
+    switch.MouseButton1Click:Connect(function()
+        setState(not state)
+    end)
+
+    return {frame = frame, setState = setState, getState = function() return state end}
 end
 
--- ============================================================
--- TP TO MURDERER
--- ============================================================
-local function TeleportToMurderer()
-    local localChar = State.CurrentCharacter or LocalPlayer.Character
-    if not localChar then return end
-    local localRoot = localChar:FindFirstChild("HumanoidRootPart")
-    if not localRoot then return end
+local function createSlider(parent, text, min, max, default, callback)
+    local frame = track(Instance.new("Frame"))
+    frame.Size = UDim2.new(1, 0, 0, 50)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
 
-    local murdererPlayer = nil
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local role = GetPlayerRole(player)
-            if role == "Murderer" then
-                murdererPlayer = player
-                break
-            end
+    local label = track(Instance.new("TextLabel"))
+    label.Size = UDim2.new(1, -50, 0, 20)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(210, 210, 220)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local valueLabel = track(Instance.new("TextLabel"))
+    valueLabel.Size = UDim2.new(0, 50, 0, 20)
+    valueLabel.Position = UDim2.new(1, -50, 0, 0)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Text = tostring(default)
+    valueLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    valueLabel.TextSize = 13
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valueLabel.Parent = frame
+
+    local barBg = track(Instance.new("Frame"))
+    barBg.Size = UDim2.new(1, 0, 0, 6)
+    barBg.Position = UDim2.new(0, 0, 0, 30)
+    barBg.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+    barBg.BorderSizePixel = 0
+    barBg.Parent = frame
+    local bc = track(Instance.new("UICorner"))
+    bc.CornerRadius = UDim.new(1, 0)
+    bc.Parent = barBg
+
+    local fill = track(Instance.new("Frame"))
+    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(80, 140, 255)
+    fill.BorderSizePixel = 0
+    fill.Parent = barBg
+    local fc = track(Instance.new("UICorner"))
+    fc.CornerRadius = UDim.new(1, 0)
+    fc.Parent = fill
+
+    local knob = track(Instance.new("Frame"))
+    knob.Size = UDim2.new(0, 14, 0, 14)
+    knob.Position = UDim2.new((default - min) / (max - min), -7, 0.5, -7)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.Parent = barBg
+    local kc = track(Instance.new("UICorner"))
+    kc.CornerRadius = UDim.new(1, 0)
+    kc.Parent = knob
+
+    local dragging = false
+    local currentValue = default
+
+    local function updateFromX(mouseX)
+        local absPos = barBg.AbsolutePosition.X
+        local absSize = barBg.AbsoluteSize.X
+        local rel = math.clamp((mouseX - absPos) / absSize, 0, 1)
+        local val = math.floor(min + rel * (max - min) + 0.5)
+        currentValue = val
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        knob.Position = UDim2.new(rel, -7, 0.5, -7)
+        valueLabel.Text = tostring(val)
+        callback(val)
+    end
+
+    barBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateFromX(input.Position.X)
+        end
+    end)
+    trackConn(UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateFromX(input.Position.X)
+        end
+    end))
+    trackConn(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end))
+
+    return {frame = frame, getValue = function() return currentValue end, setValue = function(v)
+        local rel = math.clamp((v - min) / (max - min), 0, 1)
+        currentValue = v
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        knob.Position = UDim2.new(rel, -7, 0.5, -7)
+        valueLabel.Text = tostring(v)
+        callback(v)
+    end}
+end
+
+local function createDropdown(parent, text, options, default, callback)
+    local frame = track(Instance.new("Frame"))
+    frame.Size = UDim2.new(1, 0, 0, 32)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
+
+    local label = track(Instance.new("TextLabel"))
+    label.Size = UDim2.new(1, -120, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(210, 210, 220)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local btn = track(Instance.new("TextButton"))
+    btn.Size = UDim2.new(0, 115, 0, 26)
+    btn.Position = UDim2.new(1, -115, 0.5, -13)
+    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 62)
+    btn.BorderSizePixel = 0
+    btn.Text = default or (options[1] or "")
+    btn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.Gotham
+    btn.Parent = frame
+    local bc = track(Instance.new("UICorner"))
+    bc.CornerRadius = UDim.new(0, 5)
+    bc.Parent = btn
+
+    local list = track(Instance.new("Frame"))
+    list.Size = UDim2.new(0, 115, 0, 0)
+    list.Position = UDim2.new(1, -115, 1, 2)
+    list.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
+    list.BorderSizePixel = 0
+    list.ClipsDescendants = true
+    list.Visible = false
+    list.ZIndex = 10
+    list.Parent = frame
+    local lc = track(Instance.new("UICorner"))
+    lc.CornerRadius = UDim.new(0, 5)
+    lc.Parent = list
+
+    local listLayout = track(Instance.new("UIListLayout"))
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Parent = list
+
+    local selected = default
+    local itemButtons = {}
+
+    local function rebuildOptions(newOptions)
+        for _, b in ipairs(itemButtons) do
+            pcall(function() b:Destroy() end)
+        end
+        itemButtons = {}
+        for i, opt in ipairs(newOptions) do
+            local item = track(Instance.new("TextButton"))
+            item.Size = UDim2.new(1, 0, 0, 26)
+            item.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+            item.BorderSizePixel = 0
+            item.Text = opt
+            item.TextColor3 = Color3.fromRGB(200, 200, 210)
+            item.TextSize = 12
+            item.Font = Enum.Font.Gotham
+            item.ZIndex = 11
+            item.Parent = list
+            item.MouseButton1Click:Connect(function()
+                selected = opt
+                btn.Text = opt
+                list.Visible = false
+                list.Size = UDim2.new(0, 115, 0, 0)
+                callback(opt)
+            end)
+            table.insert(itemButtons, item)
         end
     end
 
-    if not murdererPlayer then
-        print("[MM2] Murderer not found.")
-        return
-    end
+    rebuildOptions(options)
 
-    local murdererChar = murdererPlayer.Character
-    local murdererRoot = murdererChar and murdererChar:FindFirstChild("HumanoidRootPart")
-    if not murdererRoot then
-        print("[MM2] Murderer has no HumanoidRootPart.")
-        return
-    end
-
-    pcall(function()
-        localChar:PivotTo(murdererRoot.CFrame * CFrame.new(0, 0, -3))
+    btn.MouseButton1Click:Connect(function()
+        list.Visible = not list.Visible
+        if list.Visible then
+            local targetHeight = #itemButtons * 26
+            TweenService:Create(list, TweenInfo.new(0.15), {Size = UDim2.new(0, 115, 0, targetHeight)}):Play()
+        else
+            TweenService:Create(list, TweenInfo.new(0.15), {Size = UDim2.new(0, 115, 0, 0)}):Play()
+        end
     end)
-    print("[MM2] Teleported to murderer: " .. murdererPlayer.Name)
+
+    return {frame = frame, refresh = rebuildOptions, getSelected = function() return selected end}
+end
+
+local function createButton(parent, text, callback)
+    local btn = track(Instance.new("TextButton"))
+    btn.Size = UDim2.new(1, 0, 0, 32)
+    btn.BackgroundColor3 = Color3.fromRGB(55, 55, 78)
+    btn.BorderSizePixel = 0
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(230, 230, 240)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamBold
+    btn.Parent = parent
+    local c = track(Instance.new("UICorner"))
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        callback()
+    end)
+    return btn
 end
 
 -- ============================================================
--- BUILD GUI
+-- НАПОЛНЕНИЕ: FARM
 -- ============================================================
-local CandyFarmToggleUpdate
+local farmContent = categories["Farm"].container
 
-local CandyFarmFrame, candyUpdater = CreateToggle(
-    ContentFrame, 0, "🍬 Candy Farm (random)", false,
-    function(value)
-        State.CandyFarmEnabled = value
-        if value then StartCandyFarm() else StopCandyFarm() end
+createToggle(farmContent, "Auto Farm", false, function(v)
+    State.AutoFarm = v
+    if v then
+        startAutoFarm()
+    else
+        stopAutoFarm()
     end
-)
-CandyFarmToggleUpdate = candyUpdater
-
-local AntiAFKFrame, antiAFKUpdater = CreateToggle(
-    ContentFrame, 60, "🛡️ Anti-AFK", false,
-    function(value)
-        State.AntiAFKEnabled = value
-        if value then StartAntiAFK() else StopAntiAFK() end
-    end
-)
-
-local ESPFrame, espUpdater = CreateToggle(
-    ContentFrame, 120, "👁️ Role ESP", false,
-    function(value)
-        State.ESPEnabled = value
-        if value then StartESP() else StopESP() end
-    end
-)
-
--- TP TO MURDERER BUTTON
-local TPButtonFrame = Instance.new("Frame")
-TPButtonFrame.Size = UDim2.new(1, 0, 0, 45)
-TPButtonFrame.Position = UDim2.new(0, 0, 0, 180)
-TPButtonFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-TPButtonFrame.BorderSizePixel = 0
-TPButtonFrame.Parent = ContentFrame
-
-local TPButtonCorner = Instance.new("UICorner")
-TPButtonCorner.CornerRadius = UDim.new(0, 6)
-TPButtonCorner.Parent = TPButtonFrame
-
-local TPButton = Instance.new("TextButton")
-TPButton.Size = UDim2.new(1, -16, 1, -10)
-TPButton.Position = UDim2.new(0, 8, 0, 5)
-TPButton.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-TPButton.Text = "🎯 TP к убийце (одноразово)"
-TPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-TPButton.TextSize = 13
-TPButton.Font = Enum.Font.GothamBold
-TPButton.Parent = TPButtonFrame
-
-local TPButtonCorner2 = Instance.new("UICorner")
-TPButtonCorner2.CornerRadius = UDim.new(0, 6)
-TPButtonCorner2.Parent = TPButton
-
-TPButton.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    TeleportToMurderer()
 end)
 
--- ESP Legend
-local LegendFrame = Instance.new("Frame")
-LegendFrame.Size = UDim2.new(1, 0, 0, 55)
-LegendFrame.Position = UDim2.new(0, 0, 0, 235)
-LegendFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-LegendFrame.BorderSizePixel = 0
-LegendFrame.Parent = ContentFrame
+createDropdown(farmContent, "Режим движения", {"Fly — лежа", "Fly — стоя", "Teleport", "Underground Teleport"}, "Fly — лежа", function(v)
+    State.FarmMode = v
+end)
 
-local LegendCorner = Instance.new("UICorner")
-LegendCorner.CornerRadius = UDim.new(0, 6)
-LegendCorner.Parent = LegendFrame
+createSlider(farmContent, "Скорость (10–60 studs/s)", 10, 60, 35, function(v)
+    State.FarmSpeed = v
+end)
 
-local function MakeLegendRow(parent, y, color, text)
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.new(0, 10, 0, 10)
-    dot.Position = UDim2.new(0, 12, 0, y)
-    dot.BackgroundColor3 = color
-    dot.BorderSizePixel = 0
-    dot.Parent = parent
-    local dotC = Instance.new("UICorner")
-    dotC.CornerRadius = UDim.new(1, 0)
-    dotC.Parent = dot
+createDropdown(farmContent, "Порядок сбора", {"Nearest Item", "Random Item"}, "Nearest Item", function(v)
+    State.FarmOrder = v
+end)
 
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -30, 0, 14)
-    lbl.Position = UDim2.new(0, 28, 0, y - 2)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = text
-    lbl.TextColor3 = color
-    lbl.TextSize = 11
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = parent
+createToggle(farmContent, "Anti-AFK", false, function(v)
+    State.AntiAFK = v
+    if v then
+        startAntiAFK()
+    else
+        stopAntiAFK()
+    end
+end)
+
+-- ============================================================
+-- НАПОЛНЕНИЕ: VISUALS
+-- ============================================================
+local visualsContent = categories["Visuals"].container
+
+createToggle(visualsContent, "ESP Roles", false, function(v)
+    State.ESPRoles = v
+    if v then
+        startESP()
+    else
+        stopESP()
+    end
+end)
+
+createToggle(visualsContent, "Show Nicknames", false, function(v)
+    State.ShowNicknames = v
+    if v then
+        startNicknames()
+    else
+        stopNicknames()
+    end
+end)
+
+-- ============================================================
+-- НАПОЛНЕНИЕ: SHERIFF
+-- ============================================================
+local sheriffContent = categories["Sheriff"].container
+
+createToggle(sheriffContent, "Aim Assist (на убийцу)", false, function(v)
+    State.AimAssist = v
+    if v then
+        startAimAssist()
+    else
+        stopAimAssist()
+    end
+end)
+
+createButton(sheriffContent, "Get Gun ( Sheriff )", function()
+    getGunSequence()
+end)
+
+-- ============================================================
+-- НАПОЛНЕНИЕ: MURDERER
+-- ============================================================
+local murdererContent = categories["Murderer"].container
+
+local playerDropdownKill = createDropdown(murdererContent, "Выбрать игрока", {}, nil, function(v) end)
+
+createButton(murdererContent, "Kill Selected Player", function()
+    local targetName = playerDropdownKill.getSelected()
+    if targetName then
+        local target = Players:FindFirstChild(targetName)
+        if target then
+            attemptKill(target)
+        end
+    end
+end)
+
+createButton(murdererContent, "Kill All", function()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            attemptKill(plr)
+            task.wait(0.1)
+        end
+    end
+end)
+
+-- ============================================================
+-- НАПОЛНЕНИЕ: FUN
+-- ============================================================
+local funContent = categories["Fun"].container
+
+createButton(funContent, "Fling All", function()
+    State._flingRunning = true
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            attemptFling(plr)
+            task.wait(0.05)
+        end
+    end
+    task.delay(2, function() State._flingRunning = false end)
+end)
+
+local playerDropdownFling = createDropdown(funContent, "Выбрать игрока", {}, nil, function(v) end)
+
+createButton(funContent, "Fling Selected Player", function()
+    local targetName = playerDropdownFling.getSelected()
+    if targetName then
+        local target = Players:FindFirstChild(targetName)
+        if target then
+            attemptFling(target)
+        end
+    end
+end)
+
+-- ============================================================
+-- ОБНОВЛЕНИЕ СПИСКОВ ИГРОКОВ (Dropdown)
+-- ============================================================
+local function refreshPlayerDropdowns()
+    local names = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            table.insert(names, plr.Name)
+        end
+    end
+    if #names == 0 then names = {"(нет игроков)"} end
+    playerDropdownKill.refresh(names)
+    playerDropdownFling.refresh(names)
 end
 
-MakeLegendRow(LegendFrame, 6, ESP_COLORS.Murderer, "Murderer")
-MakeLegendRow(LegendFrame, 21, ESP_COLORS.Sheriff, "Sheriff")
-MakeLegendRow(LegendFrame, 36, ESP_COLORS.Innocent, "Innocent")
-
--- Info Label
-local InfoLabel = Instance.new("TextLabel")
-InfoLabel.Size = UDim2.new(1, 0, 0, 40)
-InfoLabel.Position = UDim2.new(0, 0, 0, 300)
-InfoLabel.BackgroundTransparency = 1
-InfoLabel.Text = "Candy Farm: random target, 2.0s/teleport.\nWaits if no candy nearby."
-InfoLabel.TextColor3 = Color3.fromRGB(120, 120, 130)
-InfoLabel.TextSize = 11
-InfoLabel.Font = Enum.Font.Gotham
-InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
-InfoLabel.TextWrapped = true
-InfoLabel.Parent = ContentFrame
+trackConn(Players.PlayerAdded:Connect(function() task.wait(1); refreshPlayerDropdowns() end))
+trackConn(Players.PlayerRemoving:Connect(function() task.wait(0.5); refreshPlayerDropdowns() end))
+task.spawn(function() task.wait(2); refreshPlayerDropdowns() end)
 
 -- ============================================================
--- DRAG
+-- РЕАЛИЗАЦИЯ: ANTI-AFK
 -- ============================================================
-local dragging = false
-local dragStart = nil
-local startPos = nil
-local BUTTON_ZONE_START = 1 - (70 / 280)
-
-TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        local relX = (input.Position.X - TitleBar.AbsolutePosition.X) / TitleBar.AbsoluteSize.X
-        if relX >= BUTTON_ZONE_START then return end
-        dragging = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
-    end
-end)
-
-TitleBar.InputChanged:Connect(function(input)
-    if not dragging then return end
-    if input.UserInputType == Enum.UserInputType.MouseMovement
-    or input.UserInputType == Enum.UserInputType.Touch then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-TitleBar.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
--- ============================================================
--- MINIMIZE ICON
--- ============================================================
-local MiniIcon = Instance.new("TextButton")
-MiniIcon.Name = "MiniIcon"
-MiniIcon.Size = UDim2.new(0, 40, 0, 40)
-MiniIcon.Position = UDim2.new(0, 50, 0, 50)
-MiniIcon.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-MiniIcon.BorderSizePixel = 0
-MiniIcon.Text = "M"
-MiniIcon.TextColor3 = Color3.fromRGB(220, 220, 230)
-MiniIcon.TextSize = 16
-MiniIcon.Font = Enum.Font.GothamBold
-MiniIcon.Visible = false
-MiniIcon.ZIndex = 20
-MiniIcon.Parent = ScreenGui
-
-local MiniCorner = Instance.new("UICorner")
-MiniCorner.CornerRadius = UDim.new(0, 8)
-MiniCorner.Parent = MiniIcon
-
-local MiniStroke = Instance.new("UIStroke")
-MiniStroke.Color = Color3.fromRGB(80, 180, 100)
-MiniStroke.Thickness = 2
-MiniStroke.Parent = MiniIcon
-
--- ============================================================
--- MIN / CLOSE HANDLERS
--- ============================================================
-MinButton.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    State.IsMinimized = true
-    MainFrame.Visible = false
-    MiniIcon.Visible = true
-end)
-
-MiniIcon.MouseButton1Click:Connect(function()
-    if State.IsClosed then return end
-    State.IsMinimized = false
-    MainFrame.Visible = true
-    MiniIcon.Visible = false
-end)
-
-CloseButton.MouseButton1Click:Connect(function()
-    State.IsClosed = true
-    StopCandyFarm()
-    StopAntiAFK()
-    StopESP()
-    if CandyFarmToggleUpdate then CandyFarmToggleUpdate(false) end
-    if antiAFKUpdater then antiAFKUpdater(false) end
-    if espUpdater then espUpdater(false) end
-    ClearAllHighlights()
-    ScreenGui:Destroy()
-    local character = State.CurrentCharacter or LocalPlayer.Character
-    if character then
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if rootPart then
+function startAntiAFK()
+    stopAntiAFK()
+    State._antiAFKLoop = task.spawn(function()
+        while State.AntiAFK do
+            task.wait(600) -- 10 минут
+            if not State.AntiAFK then break end
             pcall(function()
-                rootPart.AssemblyLinearVelocity = Vector3.zero
-                rootPart.AssemblyAngularVelocity = Vector3.zero
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(0, 0))
             end)
         end
+    end)
+end
+
+function stopAntiAFK()
+    if State._antiAFKLoop then
+        task.cancel(State._antiAFKLoop)
+        State._antiAFKLoop = nil
     end
-end)
+end
 
 -- ============================================================
--- CHARACTER RESPAWN → RESTART CANDY FARM THREAD
+-- РЕАЛИЗАЦИЯ: ESP ROLES
 -- ============================================================
-LocalPlayer.CharacterAdded:Connect(function(character)
-    State.CurrentCharacter = character
-    if State.CandyFarmEnabled and not State.IsClosed then
-        task.wait(1.5)
-        if State.CandyFarmEnabled and not State.IsClosed then
-            StartCandyFarm()
-        end
-    end
-end)
+local function createESPForPlayer(plr)
+    if plr == LocalPlayer then return end
+    if State._espObjects[plr] then return end
+    if not plr.Character then return end
+    local head = plr.Character:FindFirstChild("Head")
+    if not head then return end
 
-print("[MM2 Automation] Script loaded. (Waits if no candy nearby, no lobby teleport on stuck)")
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "MM2_ESP_" .. plr.Name
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.P
