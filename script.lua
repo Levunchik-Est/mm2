@@ -1,8 +1,6 @@
 --[[
     MM2 GUI — Murder Mystery 2
     Полный клиентский скрипт для executor.
-    Все функции из ТЗ реализованы в меру возможностей клиента.
-    Функции, требующие серверного доступа, помечены в комментариях.
 ]]
 
 -- ============================================================
@@ -20,76 +18,58 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 -- ============================================================
--- ГЛОБАЛЬНОЕ СОСТОЯНИЕ (единая точка управления)
+-- ГЛОБАЛЬНОЕ СОСТОЯНИЕ
 -- ============================================================
 local State = {
-    -- Farm
     AutoFarm = false,
-    FarmMode = "Fly — лежа",     -- "Fly — лежа" | "Fly — стоя" | "Teleport" | "Underground Teleport"
+    FarmMode = "Fly — лежа",
     FarmSpeed = 35,
-    FarmOrder = "Nearest Item",   -- "Nearest Item" | "Random Item"
+    FarmOrder = "Nearest Item",
     AntiAFK = false,
-    -- Visuals
     ESPRoles = false,
     ShowNicknames = false,
-    -- Sheriff
     AimAssist = false,
-    -- Murderer
-    -- (нет постоянных состояний, только кнопки)
-    -- Fun
-    -- (нет постоянных состояний, только кнопки)
-    
-    -- Внутренние
+
     _connections = {},
     _espObjects = {},
     _nicknameObjects = {},
-    _farmRunning = false,
-    _antiAFKLoop = nil,
+    _farmThread = nil,
+    _antiAFKThread = nil,
     _aimAssistConn = nil,
     _flingRunning = false,
+    _closed = false,
 }
 
--- Список всех созданных объектов GUI для полной очистки
 local GUIObjects = {}
-
-local function track(obj)
-    table.insert(GUIObjects, obj)
-    return obj
-end
+local function track(obj) table.insert(GUIObjects, obj); return obj end
+local function trackConn(c) table.insert(State._connections, c); return c end
 
 -- ============================================================
 -- УТИЛИТЫ
 -- ============================================================
 local function getHRP(plr)
     plr = plr or LocalPlayer
-    if plr.Character then
-        return plr.Character:FindFirstChild("HumanoidRootPart")
-    end
+    if plr.Character then return plr.Character:FindFirstChild("HumanoidRootPart") end
     return nil
 end
 
 local function getHumanoid(plr)
     plr = plr or LocalPlayer
-    if plr.Character then
-        return plr.Character:FindFirstChildOfClass("Humanoid")
-    end
+    if plr.Character then return plr.Character:FindFirstChildOfClass("Humanoid") end
     return nil
 end
 
--- Определение роли игрока (эвристика: Knife/Gun в Character или Backpack)
 local function getRole(plr)
     if not plr or not plr.Character then return "Innocent" end
     local char = plr.Character
     local backpack = plr:FindFirstChild("Backpack")
-    
-    local function hasTool(name)
+    local function has(name)
         if char:FindFirstChild(name) then return true end
         if backpack and backpack:FindFirstChild(name) then return true end
         return false
     end
-    
-    if hasTool("Knife") then return "Murderer" end
-    if hasTool("Gun") then return "Sheriff" end
+    if has("Knife") then return "Murderer" end
+    if has("Gun") then return "Sheriff" end
     return "Innocent"
 end
 
@@ -99,22 +79,19 @@ local function roleColor(role)
     return Color3.fromRGB(80, 255, 80)
 end
 
--- Безопасное добавление Connection в State._connections
-local function trackConn(conn)
-    table.insert(State._connections, conn)
-    return conn
-end
-
--- Полная очистка всех соединений
-local function disconnectAll()
-    for _, conn in ipairs(State._connections) do
-        pcall(function() conn:Disconnect() end)
-    end
-    State._connections = {}
-end
+-- ============================================================
+-- FORWARD DECLARATIONS (чтобы GUI мог ссылаться до определения)
+-- ============================================================
+local startAutoFarm, stopAutoFarm
+local startAntiAFK, stopAntiAFK
+local startESP, stopESP
+local startNicknames, stopNicknames
+local startAimAssist, stopAimAssist
+local getGunSequence, attemptKill, attemptFling
+local fullShutdown
 
 -- ============================================================
--- БАЗОВЫЙ GUI (ScreenGui, Main Frame, TitleBar, Nav)
+-- БАЗОВЫЙ GUI
 -- ============================================================
 local screenGui = track(Instance.new("ScreenGui"))
 screenGui.Name = "MM2_GUI"
@@ -123,7 +100,6 @@ screenGui.IgnoreGuiInset = true
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = CoreGui
 
--- Плавающая иконка (для свёрнутого режима)
 local floatingIcon = track(Instance.new("TextButton"))
 floatingIcon.Name = "FloatingIcon"
 floatingIcon.Size = UDim2.new(0, 50, 0, 50)
@@ -141,7 +117,6 @@ local iconCorner = track(Instance.new("UICorner"))
 iconCorner.CornerRadius = UDim.new(0, 12)
 iconCorner.Parent = floatingIcon
 
--- Главное окно
 local mainFrame = track(Instance.new("Frame"))
 mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 520, 0, 380)
@@ -154,7 +129,6 @@ local mainCorner = track(Instance.new("UICorner"))
 mainCorner.CornerRadius = UDim.new(0, 10)
 mainCorner.Parent = mainFrame
 
--- Заголовок (для перетаскивания)
 local titleBar = track(Instance.new("Frame"))
 titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, 0, 0, 40)
@@ -173,7 +147,6 @@ titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = titleBar
 
--- Кнопка "−" (свернуть)
 local minimizeBtn = track(Instance.new("TextButton"))
 minimizeBtn.Size = UDim2.new(0, 32, 0, 32)
 minimizeBtn.Position = UDim2.new(1, -76, 0, 4)
@@ -188,7 +161,6 @@ local minCorner = track(Instance.new("UICorner"))
 minCorner.CornerRadius = UDim.new(0, 6)
 minCorner.Parent = minimizeBtn
 
--- Кнопка "X" (закрыть)
 local closeBtn = track(Instance.new("TextButton"))
 closeBtn.Size = UDim2.new(0, 32, 0, 32)
 closeBtn.Position = UDim2.new(1, -40, 0, 4)
@@ -203,9 +175,7 @@ local closeCorner = track(Instance.new("UICorner"))
 closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = closeBtn
 
--- ============================================================
--- НАВИГАЦИЯ (5 категорий)
--- ============================================================
+-- Навигация
 local navBar = track(Instance.new("Frame"))
 navBar.Name = "NavBar"
 navBar.Size = UDim2.new(0, 130, 1, -40)
@@ -225,7 +195,6 @@ navPadding.PaddingLeft = UDim.new(0, 8)
 navPadding.PaddingRight = UDim.new(0, 8)
 navPadding.Parent = navBar
 
--- Контентная область
 local contentArea = track(Instance.new("Frame"))
 contentArea.Name = "ContentArea"
 contentArea.Size = UDim2.new(1, -138, 1, -48)
@@ -233,7 +202,6 @@ contentArea.Position = UDim2.new(0, 138, 0, 44)
 contentArea.BackgroundTransparency = 1
 contentArea.Parent = mainFrame
 
--- Контейнеры для каждой категории
 local categories = {}
 local categoryNames = {"Farm", "Visuals", "Sheriff", "Murderer", "Fun"}
 
@@ -287,12 +255,38 @@ for i, name in ipairs(categoryNames) do
     end)
 end
 
--- Выделить первую категорию
 categories["Farm"].button.BackgroundColor3 = Color3.fromRGB(55, 55, 78)
 categories["Farm"].button.TextColor3 = Color3.fromRGB(255, 255, 255)
 
 -- ============================================================
--- ФАБРИКИ UI-ЭЛЕМЕНТОВ
+-- ПЕРЕТАСКИВАНИЕ ОКНА
+-- ============================================================
+do
+    local dragging = false
+    local dragStart, startPos
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+        end
+    end)
+    trackConn(UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+                                           startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end))
+    trackConn(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end))
+end
+
+-- ============================================================
+-- ФАБРИКИ UI
 -- ============================================================
 local function createToggle(parent, text, default, callback)
     local frame = track(Instance.new("Frame"))
@@ -340,13 +334,9 @@ local function createToggle(parent, text, default, callback)
         TweenService:Create(knob, TweenInfo.new(0.2), {
             Position = state and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
         }):Play()
-        callback(state)
+        if callback then callback(state) end
     end
-
-    switch.MouseButton1Click:Connect(function()
-        setState(not state)
-    end)
-
+    switch.MouseButton1Click:Connect(function() setState(not state) end)
     return {frame = frame, setState = setState, getState = function() return state end}
 end
 
@@ -412,13 +402,14 @@ local function createSlider(parent, text, min, max, default, callback)
     local function updateFromX(mouseX)
         local absPos = barBg.AbsolutePosition.X
         local absSize = barBg.AbsoluteSize.X
+        if absSize <= 0 then return end
         local rel = math.clamp((mouseX - absPos) / absSize, 0, 1)
         local val = math.floor(min + rel * (max - min) + 0.5)
         currentValue = val
         fill.Size = UDim2.new(rel, 0, 1, 0)
         knob.Position = UDim2.new(rel, -7, 0.5, -7)
         valueLabel.Text = tostring(val)
-        callback(val)
+        if callback then callback(val) end
     end
 
     barBg.InputBegan:Connect(function(input)
@@ -438,14 +429,7 @@ local function createSlider(parent, text, min, max, default, callback)
         end
     end))
 
-    return {frame = frame, getValue = function() return currentValue end, setValue = function(v)
-        local rel = math.clamp((v - min) / (max - min), 0, 1)
-        currentValue = v
-        fill.Size = UDim2.new(rel, 0, 1, 0)
-        knob.Position = UDim2.new(rel, -7, 0.5, -7)
-        valueLabel.Text = tostring(v)
-        callback(v)
-    end}
+    return {frame = frame, getValue = function() return currentValue end}
 end
 
 local function createDropdown(parent, text, options, default, callback)
@@ -499,11 +483,10 @@ local function createDropdown(parent, text, options, default, callback)
     local itemButtons = {}
 
     local function rebuildOptions(newOptions)
-        for _, b in ipairs(itemButtons) do
-            pcall(function() b:Destroy() end)
-        end
+        for _, b in ipairs(itemButtons) do pcall(function() b:Destroy() end) end
         itemButtons = {}
-        for i, opt in ipairs(newOptions) do
+        if #newOptions == 0 then newOptions = {"(нет игроков)"} end
+        for _, opt in ipairs(newOptions) do
             local item = track(Instance.new("TextButton"))
             item.Size = UDim2.new(1, 0, 0, 26)
             item.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
@@ -519,7 +502,7 @@ local function createDropdown(parent, text, options, default, callback)
                 btn.Text = opt
                 list.Visible = false
                 list.Size = UDim2.new(0, 115, 0, 0)
-                callback(opt)
+                if callback then callback(opt) end
             end)
             table.insert(itemButtons, item)
         end
@@ -530,8 +513,7 @@ local function createDropdown(parent, text, options, default, callback)
     btn.MouseButton1Click:Connect(function()
         list.Visible = not list.Visible
         if list.Visible then
-            local targetHeight = #itemButtons * 26
-            TweenService:Create(list, TweenInfo.new(0.15), {Size = UDim2.new(0, 115, 0, targetHeight)}):Play()
+            TweenService:Create(list, TweenInfo.new(0.15), {Size = UDim2.new(0, 115, 0, #itemButtons * 26)}):Play()
         else
             TweenService:Create(list, TweenInfo.new(0.15), {Size = UDim2.new(0, 115, 0, 0)}):Play()
         end
@@ -553,10 +535,7 @@ local function createButton(parent, text, callback)
     local c = track(Instance.new("UICorner"))
     c.CornerRadius = UDim.new(0, 6)
     c.Parent = btn
-
-    btn.MouseButton1Click:Connect(function()
-        callback()
-    end)
+    btn.MouseButton1Click:Connect(function() if callback then callback() end end)
     return btn
 end
 
@@ -567,20 +546,14 @@ local farmContent = categories["Farm"].container
 
 createToggle(farmContent, "Auto Farm", false, function(v)
     State.AutoFarm = v
-    if v then
-        startAutoFarm()
-    else
-        stopAutoFarm()
-    end
+    if v then startAutoFarm() else stopAutoFarm() end
 end)
 
 createDropdown(farmContent, "Режим движения", {"Fly — лежа", "Fly — стоя", "Teleport", "Underground Teleport"}, "Fly — лежа", function(v)
     State.FarmMode = v
 end)
 
-createSlider(farmContent, "Скорость (10–60 studs/s)", 10, 60, 35, function(v)
-    State.FarmSpeed = v
-end)
+createSlider(farmContent, "Скорость (10–60 studs/s)", 10, 60, 35, function(v) State.FarmSpeed = v end)
 
 createDropdown(farmContent, "Порядок сбора", {"Nearest Item", "Random Item"}, "Nearest Item", function(v)
     State.FarmOrder = v
@@ -588,11 +561,7 @@ end)
 
 createToggle(farmContent, "Anti-AFK", false, function(v)
     State.AntiAFK = v
-    if v then
-        startAntiAFK()
-    else
-        stopAntiAFK()
-    end
+    if v then startAntiAFK() else stopAntiAFK() end
 end)
 
 -- ============================================================
@@ -602,20 +571,12 @@ local visualsContent = categories["Visuals"].container
 
 createToggle(visualsContent, "ESP Roles", false, function(v)
     State.ESPRoles = v
-    if v then
-        startESP()
-    else
-        stopESP()
-    end
+    if v then startESP() else stopESP() end
 end)
 
 createToggle(visualsContent, "Show Nicknames", false, function(v)
     State.ShowNicknames = v
-    if v then
-        startNicknames()
-    else
-        stopNicknames()
-    end
+    if v then startNicknames() else stopNicknames() end
 end)
 
 -- ============================================================
@@ -623,34 +584,24 @@ end)
 -- ============================================================
 local sheriffContent = categories["Sheriff"].container
 
-createToggle(sheriffContent, "Aim Assist (на убийцу)", false, function(v)
+createToggle(sheriffContent, "Aim Assist", false, function(v)
     State.AimAssist = v
-    if v then
-        startAimAssist()
-    else
-        stopAimAssist()
-    end
+    if v then startAimAssist() else stopAimAssist() end
 end)
 
-createButton(sheriffContent, "Get Gun ( Sheriff )", function()
-    getGunSequence()
-end)
+createButton(sheriffContent, "Get Gun", function() getGunSequence() end)
 
 -- ============================================================
 -- НАПОЛНЕНИЕ: MURDERER
 -- ============================================================
 local murdererContent = categories["Murderer"].container
-
 local playerDropdownKill = createDropdown(murdererContent, "Выбрать игрока", {}, nil, function(v) end)
 
 createButton(murdererContent, "Kill Selected Player", function()
-    local targetName = playerDropdownKill.getSelected()
-    if targetName then
-        local target = Players:FindFirstChild(targetName)
-        if target then
-            attemptKill(target)
-        end
-    end
+    local name = playerDropdownKill.getSelected()
+    if not name then return end
+    local target = Players:FindFirstChild(name)
+    if target then attemptKill(target) end
 end)
 
 createButton(murdererContent, "Kill All", function()
@@ -668,56 +619,48 @@ end)
 local funContent = categories["Fun"].container
 
 createButton(funContent, "Fling All", function()
-    State._flingRunning = true
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             attemptFling(plr)
             task.wait(0.05)
         end
     end
-    task.delay(2, function() State._flingRunning = false end)
 end)
 
 local playerDropdownFling = createDropdown(funContent, "Выбрать игрока", {}, nil, function(v) end)
 
 createButton(funContent, "Fling Selected Player", function()
-    local targetName = playerDropdownFling.getSelected()
-    if targetName then
-        local target = Players:FindFirstChild(targetName)
-        if target then
-            attemptFling(target)
-        end
-    end
+    local name = playerDropdownFling.getSelected()
+    if not name then return end
+    local target = Players:FindFirstChild(name)
+    if target then attemptFling(target) end
 end)
 
 -- ============================================================
--- ОБНОВЛЕНИЕ СПИСКОВ ИГРОКОВ (Dropdown)
+-- ОБНОВЛЕНИЕ DROPDOWN ИГРОКОВ
 -- ============================================================
 local function refreshPlayerDropdowns()
     local names = {}
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            table.insert(names, plr.Name)
-        end
+        if plr ~= LocalPlayer then table.insert(names, plr.Name) end
     end
-    if #names == 0 then names = {"(нет игроков)"} end
     playerDropdownKill.refresh(names)
     playerDropdownFling.refresh(names)
 end
 
 trackConn(Players.PlayerAdded:Connect(function() task.wait(1); refreshPlayerDropdowns() end))
 trackConn(Players.PlayerRemoving:Connect(function() task.wait(0.5); refreshPlayerDropdowns() end))
-task.spawn(function() task.wait(2); refreshPlayerDropdowns() end)
+task.spawn(function() task.wait(1); refreshPlayerDropdowns() end)
 
 -- ============================================================
--- РЕАЛИЗАЦИЯ: ANTI-AFK
+-- ANTI-AFK
 -- ============================================================
 function startAntiAFK()
     stopAntiAFK()
-    State._antiAFKLoop = task.spawn(function()
-        while State.AntiAFK do
-            task.wait(600) -- 10 минут
-            if not State.AntiAFK then break end
+    State._antiAFKThread = task.spawn(function()
+        while State.AntiAFK and not State._closed do
+            task.wait(600)
+            if not State.AntiAFK or State._closed then break end
             pcall(function()
                 VirtualUser:CaptureController()
                 VirtualUser:ClickButton2(Vector2.new(0, 0))
@@ -727,14 +670,105 @@ function startAntiAFK()
 end
 
 function stopAntiAFK()
-    if State._antiAFKLoop then
-        task.cancel(State._antiAFKLoop)
-        State._antiAFKLoop = nil
+    if State._antiAFKThread then
+        task.cancel(State._antiAFKThread)
+        State._antiAFKThread = nil
     end
 end
 
 -- ============================================================
--- РЕАЛИЗАЦИЯ: ESP ROLES
+-- AUTO FARM
+-- ============================================================
+local function findItems()
+    local items = {}
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and not obj:IsDescendantOf(LocalPlayer.Character or Workspace) then
+            local n = obj.Name
+            if n == "Coin" or n == "Coin_" or n:find("Coin") or n:find("Candy") or n:find("Item") or n:find("Gift") then
+                table.insert(items, obj)
+            end
+        end
+    end
+    return items
+end
+
+local function pickTarget(items, fromPos)
+    if #items == 0 then return nil end
+    if State.FarmOrder == "Random Item" then
+        return items[math.random(1, #items)]
+    end
+    local best, bestDist = nil, math.huge
+    for _, it in ipairs(items) do
+        local d = (it.Position - fromPos).Magnitude
+        if d < bestDist then best, bestDist = it, d end
+    end
+    return best
+end
+
+local function applyFlyMovement(targetPos, lying)
+    local hrp = getHRP()
+    local hum = getHumanoid()
+    if not hrp or not hum then return end
+    if lying then
+        hum.PlatformStand = true
+        hrp.CFrame = CFrame.new(hrp.Position, targetPos) * CFrame.Angles(0, 0, math.rad(90))
+    end
+    local dir = (targetPos - hrp.Position)
+    if dir.Magnitude < 0.5 then return end
+    local speed = State.FarmSpeed
+    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
+    hrp.CFrame = hrp.CFrame + step
+end
+
+local function applyTeleport(targetPos, underground)
+    local hrp = getHRP()
+    if not hrp then return end
+    if underground then
+        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y - 6, targetPos.Z)
+    else
+        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
+    end
+end
+
+function startAutoFarm()
+    stopAutoFarm()
+    State._farmThread = task.spawn(function()
+        while State.AutoFarm and not State._closed do
+            local hrp = getHRP()
+            if not hrp then task.wait(0.5); continue end
+            local items = findItems()
+            local target = pickTarget(items, hrp.Position)
+            if not target then task.wait(0.5); continue end
+
+            local mode = State.FarmMode
+            if mode == "Teleport" or mode == "Underground Teleport" then
+                applyTeleport(target.Position, mode == "Underground Teleport")
+                task.wait(2)
+            else
+                local lying = (mode == "Fly — лежа")
+                local deadline = tick() + 3
+                while State.AutoFarm and not State._closed and target.Parent do
+                    local dist = (target.Position - hrp.Position).Magnitude
+                    if dist < 2 then break end
+                    if tick() > deadline then break end
+                    applyFlyMovement(target.Position, lying)
+                    task.wait()
+                end
+                task.wait(0.1)
+            end
+        end
+    end)
+end
+
+function stopAutoFarm()
+    if State._farmThread then
+        task.cancel(State._farmThread)
+        State._farmThread = nil
+    end
+end
+
+-- ============================================================
+-- ESP ROLES
 -- ============================================================
 local function createESPForPlayer(plr)
     if plr == LocalPlayer then return end
@@ -748,4 +782,348 @@ local function createESPForPlayer(plr)
     billboard.Size = UDim2.new(0, 200, 0, 50)
     billboard.StudsOffset = Vector3.new(0, 2.5, 0)
     billboard.AlwaysOnTop = true
-    billboard.P
+    billboard.Parent = head
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+    label.Text = ""
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextSize = 16
+    label.Font = Enum.Font.GothamBold
+    label.TextStrokeTransparency = 0
+    label.Parent = billboard
+
+    State._espObjects[plr] = {billboard = billboard, label = label, head = head}
+end
+
+local function updateESPForPlayer(plr)
+    local data = State._espObjects[plr]
+    if not data then return end
+    if not plr.Character or not plr.Character:FindFirstChild("Head") then
+        pcall(function() data.billboard:Destroy() end)
+        State._espObjects[plr] = nil
+        return
+    end
+    local role = getRole(plr)
+    data.label.Text = plr.Name .. " [" .. role .. "]"
+    data.label.TextColor3 = roleColor(role)
+end
+
+local function removeESPForPlayer(plr)
+    local data = State._espObjects[plr]
+    if data then
+        pcall(function() data.billboard:Destroy() end)
+        State._espObjects[plr] = nil
+    end
+end
+
+function startESP()
+    stopESP()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        createESPForPlayer(plr)
+        updateESPForPlayer(plr)
+    end
+    trackConn(Players.PlayerAdded:Connect(function(plr)
+        task.wait(1)
+        if State.ESPRoles then createESPForPlayer(plr); updateESPForPlayer(plr) end
+    end))
+    trackConn(Players.PlayerRemoving:Connect(function(plr) removeESPForPlayer(plr) end))
+    -- Обновление ролей и пересоздание при респавне
+    local loop = task.spawn(function()
+        while State.ESPRoles and not State._closed do
+            task.wait(0.5)
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    if not State._espObjects[plr] then createESPForPlayer(plr) end
+                    updateESPForPlayer(plr)
+                end
+            end
+        end
+    end)
+    table.insert(State._connections, {Disconnect = function() task.cancel(loop) end})
+end
+
+function stopESP()
+    for plr, data in pairs(State._espObjects) do
+        pcall(function() data.billboard:Destroy() end)
+    end
+    State._espObjects = {}
+end
+
+-- ============================================================
+-- SHOW NICKNAMES
+-- ============================================================
+local function createNicknameForPlayer(plr)
+    if plr == LocalPlayer then return end
+    if State._nicknameObjects[plr] then return end
+    if not plr.Character then return end
+    local head = plr.Character:FindFirstChild("Head")
+    if not head then return end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "MM2_Nick_" .. plr.Name
+    billboard.Size = UDim2.new(0, 200, 0, 30)
+    billboard.StudsOffset = Vector3.new(0, 3.2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = 200
+    billboard.Parent = head
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = plr.Name
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextSize = 14
+    label.Font = Enum.Font.Gotham
+    label.TextStrokeTransparency = 0.3
+    label.Parent = billboard
+
+    State._nicknameObjects[plr] = {billboard = billboard, label = label}
+end
+
+local function removeNicknameForPlayer(plr)
+    local data = State._nicknameObjects[plr]
+    if data then
+        pcall(function() data.billboard:Destroy() end)
+        State._nicknameObjects[plr] = nil
+    end
+end
+
+function startNicknames()
+    stopNicknames()
+    for _, plr in ipairs(Players:GetPlayers()) do createNicknameForPlayer(plr) end
+    trackConn(Players.PlayerAdded:Connect(function(plr)
+        task.wait(1)
+        if State.ShowNicknames then createNicknameForPlayer(plr) end
+    end))
+    trackConn(Players.PlayerRemoving:Connect(function(plr) removeNicknameForPlayer(plr) end))
+    local loop = task.spawn(function()
+        while State.ShowNicknames and not State._closed do
+            task.wait(1)
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer and not State._nicknameObjects[plr] then
+                    createNicknameForPlayer(plr)
+                end
+            end
+        end
+    end)
+    table.insert(State._connections, {Disconnect = function() task.cancel(loop) end})
+end
+
+function stopNicknames()
+    for plr, data in pairs(State._nicknameObjects) do
+        pcall(function() data.billboard:Destroy() end)
+    end
+    State._nicknameObjects = {}
+end
+
+-- ============================================================
+-- AIM ASSIST
+-- ============================================================
+-- Примечание: гарантированное «попадание» невозможно на клиенте без
+-- серверного RemoteEvent. Здесь — наведение камеры и попытка
+-- вызвать Tool:Activate() на пистолете, когда убийца в поле зрения.
+function startAimAssist()
+    stopAimAssist()
+    State._aimAssistConn = RunService.RenderStepped:Connect(function()
+        if not State.AimAssist or State._closed then return end
+        local murderer = nil
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and getRole(plr) == "Murderer" and plr.Character then
+                local hrp = getHRP(plr)
+                if hrp then murderer = hrp; break end
+            end
+        end
+        if not murderer then return end
+        -- Наводим камеру на убийцу
+        local myHRP = getHRP()
+        if not myHRP then return end
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, murderer.Position)
+        -- Пытаемся активировать пистолет, если он в руках
+        local char = LocalPlayer.Character
+        if char then
+            for _, tool in ipairs(char:GetChildren()) do
+                if tool:IsA("Tool") and tool.Name == "Gun" then
+                    pcall(function() tool:Activate() end)
+                end
+            end
+        end
+    end)
+    table.insert(State._connections, State._aimAssistConn)
+end
+
+function stopAimAssist()
+    if State._aimAssistConn then
+        pcall(function() State._aimAssistConn:Disconnect() end)
+        State._aimAssistConn = nil
+    end
+end
+
+-- ============================================================
+-- GET GUN (последовательность)
+-- ============================================================
+-- Примечание: физическое выталкивание ЧУЖОГО игрока (шерифа) клиентом
+-- ненадёжно — сервер может откатить. Реализовано через BodyVelocity
+-- на HumanoidRootPart шерифа + вращение своего персонажа.
+function getGunSequence()
+    local myChar = LocalPlayer.Character
+    local myHRP = getHRP()
+    if not myChar or not myHRP then return end
+    local startCFrame = myHRP.CFrame
+
+    -- Ищем шерифа
+    local sheriff = nil
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and getRole(plr) == "Sheriff" then
+            sheriff = plr; break
+        end
+    end
+    if not sheriff then return end
+    local sheriffHRP = getHRP(sheriff)
+    if not sheriffHRP then return end
+
+    -- 1. Вращение своего персонажа (для вида)
+    local spinConn
+    spinConn = RunService.Heartbeat:Connect(function()
+        if myHRP and myHRP.Parent then
+            myHRP.CFrame = myHRP.CFrame * CFrame.Angles(0, math.rad(30), 0)
+        end
+    end)
+
+    -- 2. Выталкивание шерифа
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    bv.Velocity = Vector3.new(0, 500, 0)
+    bv.Parent = sheriffHRP
+
+    task.delay(2, function()
+        if spinConn then spinConn:Disconnect() end
+        pcall(function() bv:Destroy() end)
+    end)
+
+    -- 3. Ждём, пока шериф умрёт, затем ищем выпавший пистолет
+    task.spawn(function()
+        local timeout = tick() + 15
+        while tick() < timeout and not State._closed do
+            task.wait(0.3)
+            local gun = nil
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj:IsA("Tool") and obj.Name == "Gun" and not obj:IsDescendantOf(LocalPlayer.Character) then
+                    gun = obj; break
+                end
+            end
+            if gun then
+                local handle = gun:FindFirstChild("Handle") or gun:FindFirstChildWhichIsA("BasePart")
+                if handle and myHRP then
+                    pcall(function()
+                        myHRP.CFrame = CFrame.new(handle.Position + Vector3.new(0, 3, 0))
+                    end)
+                    task.wait(1)
+                end
+                break
+            end
+        end
+        -- 4. Возврат на исходную позицию
+        if myHRP and myHRP.Parent then
+            pcall(function() myHRP.CFrame = startCFrame end)
+        end
+    end)
+end
+
+-- ============================================================
+-- KILL (попытка)
+-- ============================================================
+-- Примечание: убийство обрабатывается сервером MM2. Клиент может
+-- лишь телепортироваться к цели и активировать нож. Гарантий нет.
+function attemptKill(target)
+    if not target or target == LocalPlayer then return end
+    local myHRP = getHRP()
+    local targetHRP = getHRP(target)
+    if not myHRP or not targetHRP then return end
+    local targetHum = getHumanoid(target)
+    if not targetHum or targetHum.Health <= 0 then return end
+
+    pcall(function()
+        myHRP.CFrame = CFrame.new(targetHRP.Position + Vector3.new(0, 0, 2))
+    end)
+    task.wait(0.1)
+    local char = LocalPlayer.Character
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") and tool.Name == "Knife" then
+                pcall(function() tool:Activate() end)
+            end
+        end
+    end
+end
+
+-- ============================================================
+-- FLING (попытка)
+-- ============================================================
+-- Примечание: классический fling работает нестабильно и часто
+-- блокируется анти-читом. Реализовано через BodyVelocity.
+function attemptFling(target)
+    if not target or target == LocalPlayer then return end
+    local targetHRP = getHRP(target)
+    if not targetHRP then return end
+    pcall(function()
+        local bv = Instance.new("BodyVelocity")
+        bv.MaxForce = Vector3.new(1e7, 1e7, 1e7)
+        bv.Velocity = Vector3.new(
+            (math.random() - 0.5) * 2000,
+            2000,
+            (math.random() - 0.5) * 2000
+        )
+        bv.Parent = targetHRP
+        task.delay(1, function() pcall(function() bv:Destroy() end) end)
+    end)
+end
+
+-- ============================================================
+-- СВОРАЧИВАНИЕ / ЗАКРЫТИЕ
+-- ============================================================
+minimizeBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    floatingIcon.Visible = true
+end)
+
+floatingIcon.MouseButton1Click:Connect(function()
+    floatingIcon.Visible = false
+    mainFrame.Visible = true
+end)
+
+function fullShutdown()
+    State._closed = true
+    State.AutoFarm = false
+    State.AntiAFK = false
+    State.ESPRoles = false
+    State.ShowNicknames = false
+    State.AimAssist = false
+
+    stopAutoFarm()
+    stopAntiAFK()
+    stopESP()
+    stopNicknames()
+    stopAimAssist()
+
+    disconnectAll()
+
+    for _, obj in ipairs(GUIObjects) do
+        pcall(function() obj:Destroy() end)
+    end
+    GUIObjects = {}
+
+    pcall(function() screenGui:Destroy() end)
+end
+
+closeBtn.MouseButton1Click:Connect(function()
+    fullShutdown()
+end)
+
+-- ============================================================
+-- ОЧИСТКА ПРИ ВЫХОДЕ
+-- ============================================================
+trackConn(LocalPlayer.OnTeleport:Connect(function()
+    -- Не отключаем при телепорте, только при явном закрытии
+end))
