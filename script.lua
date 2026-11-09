@@ -699,11 +699,15 @@ function startAntiAFK()
     stopAntiAFK()
     State._antiAFKThread = task.spawn(function()
         while State.AntiAFK and not State._closed do
-            task.wait(600)
+            task.wait(300) -- 5 минут, безопасный интервал
             if not State.AntiAFK or State._closed then break end
             pcall(function()
                 VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new(0, 0))
+                VirtualUser:ClickButton1(Vector2.new(0, 0))
+                -- дополнительно сбрасываем "idle" через InputBegan
+                if LocalPlayer.Idled then
+                    LocalPlayer:Idled()
+                end
             end)
         end
     end)
@@ -711,7 +715,7 @@ end
 
 function stopAntiAFK()
     if State._antiAFKThread then
-        task.cancel(State._antiAFKThread)
+        pcall(function() task.cancel(State._antiAFKThread) end)
         State._antiAFKThread = nil
     end
 end
