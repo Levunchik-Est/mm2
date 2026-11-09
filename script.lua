@@ -710,21 +710,40 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM
+-- AUTO FARM (переписан с нуля по ТЗ)
 -- ============================================================
-local farmCollected = {}
+local farmCollected = {}          -- [Instance] = true  — уже собрано
+local farmAttempts  = {}          -- [Instance] = number — сколько попыток
+local MAX_ATTEMPTS  = 3           -- попыток на одну конфету
+local FARM_TP_INTERVAL = 2        -- строго 2 секунды
+local FARM_SPEED_DEFAULT = 25
+
+-- Инициализация значений в State (если их ещё нет)
+if State.FarmSpeed == nil or State.FarmSpeed == 35 then
+    State.FarmSpeed = FARM_SPEED_DEFAULT
+end
+State.FarmOrder = State.FarmOrder or "Nearest Item"
+State.FarmMode  = State.FarmMode  or "Fly Lying"
+
+-- ------------------------------------------------------------
+-- Поиск предметов
+-- ------------------------------------------------------------
+local function isCandyPart(obj)
+    if not obj or not obj.Parent then return false end
+    if not obj:IsA("BasePart") then return false end
+    local n = obj.Name
+    return n == "Coin" or n == "Coin_" or n:find("Coin")
+        or n:find("Candy") or n:find("Item") or n:find("Gift")
+end
 
 local function findItems()
     local items = {}
     local myChar = LocalPlayer.Character
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Parent ~= nil then
+        if isCandyPart(obj) then
             if not myChar or not obj:IsDescendantOf(myChar) then
                 if not farmCollected[obj] then
-                    local n = obj.Name
-                    if n == "Coin" or n == "Coin_" or n:find("Coin") or n:find("Candy") or n:find("Item") or n:find("Gift") then
-                        table.insert(items, obj)
-                    end
+                    table.insert(items, obj)
                 end
             end
         end
@@ -745,6 +764,10 @@ local function pickTarget(items, fromPos)
     return best
 end
 
+-- ------------------------------------------------------------
+-- Безопасное включение/выключение физики
+-- (используется ТОЛЬКО вокруг реального движения)
+-- ------------------------------------------------------------
 local function setNoCollide(on)
     local char = LocalPlayer.Character
     if not char then return end
@@ -755,26 +778,94 @@ local function setNoCollide(on)
     end
 end
 
-local function flyStepTo(targetPos, lying, fixedY)
+local function freezeForFly(on)
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = on end
+end
+
+-- ------------------------------------------------------------
+-- Проверка успешного сбора: ждём, пока объект исчезнет
+-- ------------------------------------------------------------
+local function waitCollected(item, timeout)
+    local deadline = tick() + (timeout or 2)
+    while tick() < deadline do
+        if not item or not item.Parent then
+            return true
+        end
+        task.wait(0.05)
+    end
+    return false
+end
+
+-- ------------------------------------------------------------
+-- Микродвижения (небольшие колебания, чтобы регистрировался Touch)
+-- ------------------------------------------------------------
+local microOffset = 0
+local function applyMicroJitter(hrp, baseY)
+    microOffset = microOffset + 0.15
+    local dy = math.sin(microOffset) * 0.3
+    if hrp and hrp.Parent then
+        hrp.CFrame = CFrame.new(hrp.Position.X, baseY + dy, hrp.Position.Z)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
+end
+
+-- ------------------------------------------------------------
+-- TELEPORT (обычный)
+-- ------------------------------------------------------------
+local function doTeleportNormal(targetPos)
+    local hrp = getHRP()
+    if not hrp then return end
+    hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+end
+
+-- ------------------------------------------------------------
+-- UNDERGROUND TELEPORT
+-- ------------------------------------------------------------
+local function doTeleportUnderground(targetPos)
+    local hrp = getHRP()
+    if not hrp then return end
+    local fixedCF = CFrame.new(targetPos.X, targetPos.Y - 4.5, targetPos.Z)
+    hrp.CFrame = fixedCF
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    -- Держим позицию 0.5 сек, но без драки с потолком: только velocity=0
+    local holdUntil = tick() + 0.5
+    local holdThread = task.spawn(function()
+        while tick() < holdUntil and State.AutoFarm and not State._closed do
+            local h = getHRP()
+            if h then
+                h.CFrame = fixedCF
+                h.AssemblyLinearVelocity = Vector3.zero
+            end
+            task.wait(0.05)
+        end
+    end)
+    return holdThread
+end
+
+-- ------------------------------------------------------------
+-- FLY (общий для Lying/Standing)
+-- Возвращает true, если долетели до цели.
+-- ------------------------------------------------------------
+local function doFlyStep(targetPos, lying, fixedY)
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum then return false end
 
     local current = hrp.Position
-    local destXZ = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local curXZ  = Vector3.new(current.X,  fixedY, current.Z)
-    local dir = destXZ - curXZ
-
-    if dir.Magnitude < 0.5 then
-        hrp.CFrame = CFrame.new(Vector3.new(current.X, fixedY, current.Z))
-        hrp.AssemblyLinearVelocity = Vector3.zero
+    local dir = Vector3.new(targetPos.X - current.X, 0, targetPos.Z - current.Z)
+    if dir.Magnitude < 2 then
         return true
     end
 
     local speed = State.FarmSpeed
     local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
-    local newPos = Vector3.new(current.X + step.X, fixedY, current.Z + step.Z)
-    local newCF = CFrame.new(newPos, Vector3.new(targetPos.X, fixedY, targetPos.Z))
+    local newX = current.X + step.X
+    local newZ = current.Z + step.Z
+
+    local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
+    local newCF = CFrame.new(Vector3.new(newX, fixedY, newZ), lookAt)
     if lying then
         newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
     end
@@ -783,94 +874,111 @@ local function flyStepTo(targetPos, lying, fixedY)
     return false
 end
 
-local function applyTeleportUnderground(targetPos)
-    local hrp = getHRP()
-    local hum = getHumanoid()
-    if not hrp or not hum then return end
-    hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y - 4.5, targetPos.Z)
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    bv.Velocity = Vector3.zero
-    bv.Parent = hrp
-    task.delay(0.4, function() pcall(function() bv:Destroy() end) end)
-end
-
-local function applyTeleportNormal(targetPos)
-    local hrp = getHRP()
-    local hum = getHumanoid()
-    if not hrp or not hum then return end
-    hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
-    hrp.AssemblyLinearVelocity = Vector3.zero
-end
-
-local function waitItemCollected(item, timeout)
-    local deadline = tick() + (timeout or 2)
-    while tick() < deadline do
-        if not item or not item.Parent then
-            return true
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
+-- ------------------------------------------------------------
+-- ГЛАВНЫЙ ЦИКЛ
+-- ------------------------------------------------------------
 function startAutoFarm()
     stopAutoFarm()
     farmCollected = {}
+    farmAttempts = {}
+
     State._farmThread = task.spawn(function()
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
+            local hum = getHumanoid()
 
-            if not hrp then
+            -- Нет персонажа / умер / респавн — ждём, физику НЕ трогаем
+            if not hrp or not hum or hum.Health <= 0 then
+                freezeForFly(false)
+                setNoCollide(false)
                 task.wait(0.5)
             else
                 local items = findItems()
 
-                -- Конфет нет — просто ждём, персонажа не трогаем вообще
+                -- КОНФЕТ НЕТ — просто стоим, ничего не делаем
                 if #items == 0 then
-                    task.wait(0.5)
+                    -- На всякий случай убеждаемся, что физика в норме
+                    freezeForFly(false)
+                    task.wait(0.4)
                 else
-                    local mode = State.FarmMode
                     local target = pickTarget(items, hrp.Position)
+                    if not target then
+                        task.wait(0.3)
+                    else
+                        local mode = State.FarmMode
 
-                    if target then
+                        -------------------------------------------------
+                        -- TELEPORT
+                        -------------------------------------------------
                         if mode == "Teleport" then
-                            applyTeleportNormal(target.Position)
-                            waitItemCollected(target, 2)
+                            doTeleportNormal(target.Position)
+                            waitCollected(target, 1.5)
                             farmCollected[target] = true
-                            task.wait(2)
+                            task.wait(FARM_TP_INTERVAL)
 
+                        -------------------------------------------------
+                        -- UNDERGROUND TELEPORT
+                        -------------------------------------------------
                         elseif mode == "Underground Teleport" then
-                            applyTeleportUnderground(target.Position)
-                            waitItemCollected(target, 2)
+                            local hold = doTeleportUnderground(target.Position)
+                            waitCollected(target, 1.5)
+                            if hold then pcall(function() task.cancel(hold) end) end
                             farmCollected[target] = true
-                            task.wait(2)
+                            task.wait(FARM_TP_INTERVAL)
 
+                        -------------------------------------------------
+                        -- FLY (Lying / Standing)
+                        -------------------------------------------------
                         else
-                            local lying = (mode == "Fly — лежа")
+                            local lying = (mode == "Fly Lying")
+                            -- Фиксируем высоту только если стоим на земле
+                            local fixedY
+                            if hum.FloorMaterial ~= Enum.Material.Air then
+                                fixedY = hrp.Position.Y + 2
+                            else
+                                fixedY = hrp.Position.Y  -- не поднимаем, если в воздухе
+                            end
+
+                            freezeForFly(true)
                             setNoCollide(true)
-                            local hum = getHumanoid()
-                            if hum then hum.PlatformStand = true end
-                            local fixedY = hrp.Position.Y + 2
-                            local deadline = tick() + 3
+
+                            local deadline = tick() + 5
+                            local reached = false
                             while State.AutoFarm and not State._closed and target.Parent do
-                                local dx = target.Position.X - hrp.Position.X
-                                local dz = target.Position.Z - hrp.Position.Z
-                                if math.sqrt(dx*dx + dz*dz) < 3 then break end
                                 if tick() > deadline then break end
-                                flyStepTo(target.Position, lying, fixedY)
+                                if doFlyStep(target.Position, lying, fixedY) then
+                                    reached = true
+                                    break
+                                end
+                                applyMicroJitter(hrp, fixedY)
                                 task.wait()
                             end
-                            farmCollected[target] = true
-                            task.wait(2)
+
+                            -- Возвращаем физику сразу после подлёта
+                            setNoCollide(false)
+                            freezeForFly(false)
+
+                            -- Проверяем фактический сбор
+                            local ok = waitCollected(target, 1.0)
+                            if ok then
+                                farmCollected[target] = true
+                            else
+                                farmAttempts[target] = (farmAttempts[target] or 0) + 1
+                                if farmAttempts[target] >= MAX_ATTEMPTS then
+                                    farmCollected[target] = true
+                                end
+                            end
+
+                            task.wait(0.3)
                         end
-                    else
-                        task.wait(0.3)
                     end
                 end
             end
         end
+
+        -- При выходе из цикла гарантированно сбрасываем физику
+        freezeForFly(false)
+        setNoCollide(false)
     end)
 end
 
@@ -880,9 +988,10 @@ function stopAutoFarm()
         State._farmThread = nil
     end
     farmCollected = {}
+    farmAttempts = {}
+    freezeForFly(false)
     setNoCollide(false)
-    local hum = getHumanoid()
-    if hum then hum.PlatformStand = false end
+    -- На случай, если остались BodyVelocity — не трогаем, они самоудалятся
 end
 
 -- ============================================================
