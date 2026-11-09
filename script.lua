@@ -774,29 +774,47 @@ local function pickTarget(items, fromPos)
 end
 
 -- ------------------------------------------------------------
--- Коллизии: полностью выкл/вкл
+-- Полное отключение физики персонажа на время движения
 -- ------------------------------------------------------------
-local function disableCollisions()
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
+local function disablePhysics()
+    local hum = getHumanoid()
+    local hrp = getHRP()
+    if not hum or not hrp then return end
+    hum.PlatformStand = true
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+    for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
         if part:IsA("BasePart") then
-            pcall(function() part.CanCollide = false end)
+            pcall(function()
+                part.CanCollide = false
+                part.CanTouch = false
+            end)
         end
     end
+    hrp.AssemblyLinearVelocity = Vector3.zero
 end
 
-local function restoreCollisions()
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            pcall(function() part.CanCollide = true end)
+local function enablePhysics()
+    local hum = getHumanoid()
+    local hrp = getHRP()
+    if not hum then return end
+    hum.PlatformStand = false
+    hum.WalkSpeed = 16
+    hum.JumpPower = 50
+    if LocalPlayer.Character then
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                pcall(function()
+                    part.CanCollide = true
+                    part.CanTouch = true
+                end)
+            end
         end
     end
-    -- HumanoidRootPart в норме не должен коллизить (иначе застревание)
-    local hrp = getHRP()
-    if hrp then pcall(function() hrp.CanCollide = false end) end
+    if hrp then
+        pcall(function() hrp.CanCollide = false end)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
 end
 
 -- Приземление: ставим персонажа на ближайшую поверхность
@@ -804,7 +822,7 @@ local function landOnGround()
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum then return end
-    hum.PlatformStand = false
+    enablePhysics()
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {LocalPlayer.Character}
@@ -813,11 +831,6 @@ local function landOnGround()
         hrp.CFrame = CFrame.new(ray.Position + Vector3.new(0, 3.5, 0))
     end
     hrp.AssemblyLinearVelocity = Vector3.zero
-end
-
-local function freezeForFly(on)
-    local hum = getHumanoid()
-    if hum then hum.PlatformStand = on end
 end
 
 -- ------------------------------------------------------------
@@ -832,19 +845,6 @@ local function waitCollected(item, timeout)
         task.wait(0.05)
     end
     return false
-end
-
--- ------------------------------------------------------------
--- Микродвижения
--- ------------------------------------------------------------
-local microOffset = 0
-local function applyMicroJitter(hrp, baseY)
-    microOffset = microOffset + 0.15
-    local dy = math.sin(microOffset) * 0.3
-    if hrp and hrp.Parent then
-        hrp.CFrame = CFrame.new(hrp.Position.X, baseY + dy, hrp.Position.Z)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-    end
 end
 
 -- ------------------------------------------------------------
@@ -882,16 +882,14 @@ local function doTeleportUnderground(targetPos)
         desiredHRP_Y = ray.Position.Y - HEAD_OFFSET - 0.5
     end
 
+    disablePhysics()
     local fixedCF = CFrame.new(targetPos.X, desiredHRP_Y, targetPos.Z)
     hrp.CFrame = fixedCF
     hrp.AssemblyLinearVelocity = Vector3.zero
 
-    -- Коллизии выключены, физика удержания
-    disableCollisions()
-    hum.PlatformStand = true
-
-    local deadline = tick() + 2
+    -- Держим жёстко, БЕЗ падения (гравитация выключена)
     local holdThread = task.spawn(function()
+        local deadline = tick() + 2
         while tick() < deadline and State.AutoFarm and not State._closed do
             local h = getHRP()
             if not h then break end
@@ -899,16 +897,15 @@ local function doTeleportUnderground(targetPos)
             h.AssemblyLinearVelocity = Vector3.zero
             task.wait(0.03)
         end
-        if not State.AutoFarm or State._closed then return end
-        hum.PlatformStand = false
-        restoreCollisions()
-        landOnGround()
+        if State.AutoFarm and not State._closed then
+            landOnGround()
+        end
     end)
     return holdThread
 end
 
 -- ------------------------------------------------------------
--- FLY — сквозь стены
+-- FLY — мгновенный проход сквозь стены (без «упора»)
 -- ------------------------------------------------------------
 local function doFlyStep(targetPos, lying, fixedY)
     local hrp = getHRP()
@@ -921,13 +918,10 @@ local function doFlyStep(targetPos, lying, fixedY)
         return true
     end
 
-    local speed = State.FarmSpeed
-    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
-    local newX = current.X + step.X
-    local newZ = current.Z + step.Z
-
+    -- Мгновенный шаг: сервер не успевает откатить
+    local newPos = Vector3.new(targetPos.X, fixedY, targetPos.Z)
     local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local newCF = CFrame.new(Vector3.new(newX, fixedY, newZ), lookAt)
+    local newCF = CFrame.new(newPos, lookAt)
     if lying then
         newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
     end
@@ -950,15 +944,13 @@ function startAutoFarm()
             local hum = getHumanoid()
 
             if not hrp or not hum or hum.Health <= 0 then
-                freezeForFly(false)
-                restoreCollisions()
+                landOnGround()
                 task.wait(0.5)
             else
                 local items = findItems()
 
                 if #items == 0 then
-                    freezeForFly(false)
-                    restoreCollisions()
+                    enablePhysics()
                     task.wait(0.4)
                 else
                     local target = pickTarget(items, hrp.Position)
@@ -983,9 +975,6 @@ function startAutoFarm()
                             local hold = doTeleportUnderground(target.Position)
                             waitCollected(target, 1.5)
                             if hold then pcall(function() task.cancel(hold) end) end
-                            -- Гарантированно вернуть физику после удержания
-                            if getHumanoid() then getHumanoid().PlatformStand = false end
-                            restoreCollisions()
                             landOnGround()
                             farmCollected[target] = true
                             task.wait(FARM_TP_INTERVAL)
@@ -1002,8 +991,7 @@ function startAutoFarm()
                                 fixedY = hrp.Position.Y
                             end
 
-                            freezeForFly(true)
-                            disableCollisions()
+                            disablePhysics() -- гравитация + коллизии + скорость
 
                             local deadline = tick() + 5
                             while State.AutoFarm and not State._closed and target.Parent do
@@ -1011,14 +999,10 @@ function startAutoFarm()
                                 if doFlyStep(target.Position, lying, fixedY) then
                                     break
                                 end
-                                applyMicroJitter(hrp, fixedY)
-                                task.wait()
+                                task.wait(0.02) -- короткий шаг, не каждый кадр
                             end
 
-                            -- Возвращаем физику и ставим на землю
-                            freezeForFly(false)
-                            restoreCollisions()
-                            landOnGround()
+                            landOnGround() -- возврат физики + приземление
 
                             local ok = waitCollected(target, 1.0)
                             if ok then
@@ -1037,8 +1021,6 @@ function startAutoFarm()
             end
         end
 
-        freezeForFly(false)
-        restoreCollisions()
         landOnGround()
     end)
 end
@@ -1050,8 +1032,6 @@ function stopAutoFarm()
     end
     farmCollected = {}
     farmAttempts = {}
-    freezeForFly(false)
-    restoreCollisions()
     landOnGround()
 end
 
