@@ -1000,52 +1000,54 @@ function stopAutoFarm()
 end
 
 -- ============================================================
--- ESP ROLES
+-- ESP ROLES (подсветка тела сквозь стены)
 -- ============================================================
 local function createESPForPlayer(plr)
     if plr == LocalPlayer then return end
     if State._espObjects[plr] then return end
     if not plr.Character then return end
-    local head = plr.Character:FindFirstChild("Head")
-    if not head then return end
 
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "MM2_ESP_" .. plr.Name
-    billboard.Size = UDim2.new(0, 200, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 2.5, 0)
-    billboard.AlwaysOnTop = true
-    billboard.Parent = head
+    local role = getRole(plr)
+    local color = roleColor(role)
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 1, 0)
-        label.BackgroundTransparency = 1
-    label.Text = ""
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.TextSize = 16
-    label.Font = Enum.Font.GothamBold
-    label.TextStrokeTransparency = 0
-    label.Parent = billboard
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "MM2_ESP_" .. plr.Name
+    highlight.Adornee = plr.Character
+    highlight.FillColor = color
+    highlight.FillTransparency = 0.55
+    highlight.OutlineColor = color
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = plr.Character
 
-    State._espObjects[plr] = {billboard = billboard, label = label, head = head}
+    State._espObjects[plr] = {highlight = highlight, role = role, character = plr.Character}
 end
 
 local function updateESPForPlayer(plr)
     local data = State._espObjects[plr]
     if not data then return end
-    if not plr.Character or not plr.Character:FindFirstChild("Head") then
-        pcall(function() data.billboard:Destroy() end)
-        State._espObjects[plr] = nil
+
+    -- Персонаж сменился (респавн) — пересоздаём
+    if not plr.Character or data.character ~= plr.Character then
+        removeESPForPlayer(plr)
+        createESPForPlayer(plr)
         return
     end
+
+    -- Роль сменилась (например, шериф подобрал Gun) — обновляем цвет
     local role = getRole(plr)
-    data.label.Text = plr.Name .. " [" .. role .. "]"
-    data.label.TextColor3 = roleColor(role)
+    if role ~= data.role then
+        local color = roleColor(role)
+        data.highlight.FillColor = color
+        data.highlight.OutlineColor = color
+        data.role = role
+    end
 end
 
 local function removeESPForPlayer(plr)
     local data = State._espObjects[plr]
     if data then
-        pcall(function() data.billboard:Destroy() end)
+        pcall(function() data.highlight:Destroy() end)
         State._espObjects[plr] = nil
     end
 end
@@ -1061,8 +1063,8 @@ function startESP()
         if State.ESPRoles then createESPForPlayer(plr); updateESPForPlayer(plr) end
     end))
     trackConn(Players.PlayerRemoving:Connect(function(plr) removeESPForPlayer(plr) end))
-    -- Обновление ролей и пересоздание при респавне
-    local loop = task.spawn(function()
+
+    State._espThread = task.spawn(function()
         while State.ESPRoles and not State._closed do
             task.wait(0.5)
             for _, plr in ipairs(Players:GetPlayers()) do
@@ -1073,12 +1075,15 @@ function startESP()
             end
         end
     end)
-    table.insert(State._connections, {Disconnect = function() task.cancel(loop) end})
 end
 
 function stopESP()
+    if State._espThread then
+        pcall(function() task.cancel(State._espThread) end)
+        State._espThread = nil
+    end
     for plr, data in pairs(State._espObjects) do
-        pcall(function() data.billboard:Destroy() end)
+        pcall(function() data.highlight:Destroy() end)
     end
     State._espObjects = {}
 end
