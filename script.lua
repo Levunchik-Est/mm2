@@ -712,13 +712,20 @@ end
 -- ============================================================
 -- AUTO FARM
 -- ============================================================
+local farmCollected = {}   -- [Instance] = true — уже собрано/обработано
+
 local function findItems()
     local items = {}
+    local myChar = LocalPlayer.Character
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and not obj:IsDescendantOf(LocalPlayer.Character or Workspace) then
-            local n = obj.Name
-            if n == "Coin" or n == "Coin_" or n:find("Coin") or n:find("Candy") or n:find("Item") or n:find("Gift") then
-                table.insert(items, obj)
+        if obj:IsA("BasePart") and obj.Parent ~= nil then
+            if not myChar or not obj:IsDescendantOf(myChar) then
+                if not farmCollected[obj] then
+                    local n = obj.Name
+                    if n == "Coin" or n == "Coin_" or n:find("Coin") or n:find("Candy") or n:find("Item") or n:find("Gift") then
+                        table.insert(items, obj)
+                    end
+                end
             end
         end
     end
@@ -763,31 +770,60 @@ local function applyTeleport(targetPos, underground)
     end
 end
 
+-- Ждём, пока предмет исчезнет (собран) или таймаут
+local function waitItemCollected(item, timeout)
+    local deadline = tick() + (timeout or 2)
+    while tick() < deadline do
+        if not item or not item.Parent then
+            return true
+        end
+        task.wait(0.1)
+    end
+    return false
+end
+
 function startAutoFarm()
     stopAutoFarm()
+    farmCollected = {}
     State._farmThread = task.spawn(function()
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
-            if not hrp then task.wait(0.5); continue end
-            local items = findItems()
-            local target = pickTarget(items, hrp.Position)
-            if not target then task.wait(0.5); continue end
-
-            local mode = State.FarmMode
-            if mode == "Teleport" or mode == "Underground Teleport" then
-                applyTeleport(target.Position, mode == "Underground Teleport")
-                task.wait(2)
+            if not hrp then
+                task.wait(0.5)
             else
-                local lying = (mode == "Fly — лежа")
-                local deadline = tick() + 3
-                while State.AutoFarm and not State._closed and target.Parent do
-                    local dist = (target.Position - hrp.Position).Magnitude
-                    if dist < 2 then break end
-                    if tick() > deadline then break end
-                    applyFlyMovement(target.Position, lying)
-                    task.wait()
+                local items = findItems()
+                local target = pickTarget(items, hrp.Position)
+                if not target then
+                    task.wait(0.5)
+                else
+                    local mode = State.FarmMode
+                    if mode == "Teleport" or mode == "Underground Teleport" then
+                        -- Телепорт ровно ОДИН раз к цели
+                        applyTeleport(target.Position, mode == "Underground Teleport")
+                        -- Ждём, пока предмет исчезнет (значит, собран)
+                        local collected = waitItemCollected(target, 2)
+                        if collected then
+                            farmCollected[target] = true
+                        else
+                            -- Не собрался — помечаем, чтобы не телепортироваться снова
+                            farmCollected[target] = true
+                        end
+                        -- Пауза между телепортами
+                        task.wait(2)
+                    else
+                        local lying = (mode == "Fly — лежа")
+                        local deadline = tick() + 3
+                        while State.AutoFarm and not State._closed and target.Parent do
+                            local dist = (target.Position - hrp.Position).Magnitude
+                            if dist < 2 then break end
+                            if tick() > deadline then break end
+                            applyFlyMovement(target.Position, lying)
+                            task.wait()
+                        end
+                        farmCollected[target] = true
+                        task.wait(0.1)
+                    end
                 end
-                task.wait(0.1)
             end
         end
     end)
@@ -798,6 +834,7 @@ function stopAutoFarm()
         task.cancel(State._farmThread)
         State._farmThread = nil
     end
+    farmCollected = {}
 end
 
 -- ============================================================
