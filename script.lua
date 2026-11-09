@@ -723,12 +723,10 @@ local farmCollected = {}          -- [Instance] = true  — уже собран�
 local farmAttempts  = {}          -- [Instance] = number — сколько попыток
 local MAX_ATTEMPTS  = 3           -- попыток на одну конфету
 local FARM_TP_INTERVAL = 2        -- строго 2 секунды
-local FARM_SPEED_DEFAULT = 25
+local FARM_SPEED_DEFAULT = 35     -- синхронизировано со слайдером (10–60, дефолт 35)
 
 -- Инициализация значений в State (если их ещё нет)
-if State.FarmSpeed == nil or State.FarmSpeed == 35 then
-    State.FarmSpeed = FARM_SPEED_DEFAULT
-end
+State.FarmSpeed = State.FarmSpeed or FARM_SPEED_DEFAULT
 State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
 
