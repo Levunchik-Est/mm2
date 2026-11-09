@@ -819,76 +819,54 @@ function startAutoFarm()
     stopAutoFarm()
     farmCollected = {}
     State._farmThread = task.spawn(function()
-        local roundActive = false
-        local roundStart = 0
-        local PREP_TIME = 10     -- секунд подготовки после появления конфет
-        local TP_INTERVAL = 2    -- секунд между телепортами
-
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
+
             if not hrp then
                 task.wait(0.5)
             else
                 local items = findItems()
 
-                -- 1. Конфет нет → лобби / конец раунда. Стоим, ничего не делаем.
+                -- Конфет нет — просто ждём, персонажа не трогаем вообще
                 if #items == 0 then
-                    roundActive = false
-                    roundStart = 0
-                    setNoCollide(false)
-                    local hum = getHumanoid()
-                    if hum then hum.PlatformStand = false end
                     task.wait(0.5)
                 else
-                    -- 2. Конфеты появились впервые → старт раунда, сброс собранного
-                    if not roundActive then
-                        roundActive = true
-                        roundStart = tick()
-                        farmCollected = {}
-                    end
+                    local mode = State.FarmMode
+                    local target = pickTarget(items, hrp.Position)
 
-                    -- 3. Идёт подготовка — стоим, не телепортируемся
-                    local elapsed = tick() - roundStart
-                    if elapsed < PREP_TIME then
-                        task.wait(0.3)
-                    else
-                        -- 4. Подготовка прошла → телепорт к конфете раз в TP_INTERVAL
-                        local mode = State.FarmMode
-                        local target = pickTarget(items, hrp.Position)
-                        if not target then
-                            task.wait(0.3)
+                    if target then
+                        if mode == "Teleport" then
+                            applyTeleportNormal(target.Position)
+                            waitItemCollected(target, 2)
+                            farmCollected[target] = true
+                            task.wait(2)
+
+                        elseif mode == "Underground Teleport" then
+                            applyTeleportUnderground(target.Position)
+                            waitItemCollected(target, 2)
+                            farmCollected[target] = true
+                            task.wait(2)
+
                         else
-                            if mode == "Teleport" then
-                                applyTeleportNormal(target.Position)
-                                waitItemCollected(target, 2)
-                                farmCollected[target] = true
-                                task.wait(TP_INTERVAL)
-                            elseif mode == "Underground Teleport" then
-                                applyTeleportUnderground(target.Position)
-                                waitItemCollected(target, 2)
-                                farmCollected[target] = true
-                                task.wait(TP_INTERVAL)
-                            else
-                                -- Fly-режимы
-                                local lying = (mode == "Fly — лежа")
-                                setNoCollide(true)
-                                local hum = getHumanoid()
-                                if hum then hum.PlatformStand = true end
-                                local fixedY = hrp.Position.Y + 2
-                                local deadline = tick() + 3
-                                while State.AutoFarm and not State._closed and target.Parent do
-                                    local dx = target.Position.X - hrp.Position.X
-                                    local dz = target.Position.Z - hrp.Position.Z
-                                    local distXZ = math.sqrt(dx*dx + dz*dz)
-                                    if distXZ < 3 then break end
-                                    if tick() > deadline then break end
-                                    flyStepTo(target.Position, lying, fixedY)
-                                    task.wait()
-                                end
-                                farmCollected[target] = true
-                                task.wait(TP_INTERVAL)
+                            local lying = (mode == "Fly — лежа")
+                            setNoCollide(true)
+                            local hum = getHumanoid()
+                            if hum then hum.PlatformStand = true end
+                            local fixedY = hrp.Position.Y + 2
+                            local deadline = tick() + 3
+                            while State.AutoFarm and not State._closed and target.Parent do
+                                local dx = target.Position.X - hrp.Position.X
+                                local dz = target.Position.Z - hrp.Position.Z
+                                if math.sqrt(dx*dx + dz*dz) < 3 then break end
+                                if tick() > deadline then break end
+                                flyStepTo(target.Position, lying, fixedY)
+                                task.wait()
                             end
+                            farmCollected[target] = true
+                            task.wait(2)
                         end
+                    else
+                        task.wait(0.3)
                     end
                 end
             end
