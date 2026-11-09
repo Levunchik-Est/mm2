@@ -436,6 +436,8 @@ local function createDropdown(parent, text, options, default, callback)
     local frame = track(Instance.new("Frame"))
     frame.Size = UDim2.new(1, 0, 0, 32)
     frame.BackgroundTransparency = 1
+    frame.ClipsDescendants = false
+    frame.ZIndex = 5
     frame.Parent = parent
 
     local label = track(Instance.new("TextLabel"))
@@ -446,6 +448,7 @@ local function createDropdown(parent, text, options, default, callback)
     label.TextSize = 13
     label.Font = Enum.Font.Gotham
     label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 5
     label.Parent = frame
 
     local btn = track(Instance.new("TextButton"))
@@ -457,20 +460,22 @@ local function createDropdown(parent, text, options, default, callback)
     btn.TextColor3 = Color3.fromRGB(220, 220, 230)
     btn.TextSize = 12
     btn.Font = Enum.Font.Gotham
+    btn.ZIndex = 6
     btn.Parent = frame
     local bc = track(Instance.new("UICorner"))
     bc.CornerRadius = UDim.new(0, 5)
     bc.Parent = btn
 
+    -- Список привязан к кнопке и раскрывается строго под ней
     local list = track(Instance.new("Frame"))
     list.Size = UDim2.new(0, 115, 0, 0)
-    list.Position = UDim2.new(1, -115, 1, 2)
+    list.Position = UDim2.new(0, 0, 1, 4)
     list.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
     list.BorderSizePixel = 0
     list.ClipsDescendants = true
     list.Visible = false
-    list.ZIndex = 10
-    list.Parent = frame
+    list.ZIndex = 20
+    list.Parent = btn
     local lc = track(Instance.new("UICorner"))
     lc.CornerRadius = UDim.new(0, 5)
     lc.Parent = list
@@ -481,6 +486,20 @@ local function createDropdown(parent, text, options, default, callback)
 
     local selected = default
     local itemButtons = {}
+    local expanded = false
+
+    local function updateCanvas()
+        local p = parent
+        while p and not p:IsA("ScrollingFrame") do
+            p = p.Parent
+        end
+        if p then
+            local layout = p:FindFirstChildOfClass("UIListLayout")
+            if layout then
+                p.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 20)
+            end
+        end
+    end
 
     local function rebuildOptions(newOptions)
         for _, b in ipairs(itemButtons) do pcall(function() b:Destroy() end) end
@@ -495,11 +514,12 @@ local function createDropdown(parent, text, options, default, callback)
             item.TextColor3 = Color3.fromRGB(200, 200, 210)
             item.TextSize = 12
             item.Font = Enum.Font.Gotham
-            item.ZIndex = 11
+            item.ZIndex = 21
             item.Parent = list
             item.MouseButton1Click:Connect(function()
                 selected = opt
                 btn.Text = opt
+                expanded = false
                 list.Visible = false
                 list.Size = UDim2.new(0, 115, 0, 0)
                 if callback then callback(opt) end
@@ -511,11 +531,25 @@ local function createDropdown(parent, text, options, default, callback)
     rebuildOptions(options)
 
     btn.MouseButton1Click:Connect(function()
-        list.Visible = not list.Visible
-        if list.Visible then
+        expanded = not expanded
+        list.Visible = expanded
+        if expanded then
+            list.Size = UDim2.new(0, 115, 0, 0)
             TweenService:Create(list, TweenInfo.new(0.15), {Size = UDim2.new(0, 115, 0, #itemButtons * 26)}):Play()
+            frame.ZIndex = 50
+            btn.ZIndex = 51
+            list.ZIndex = 52
+            for _, ib in ipairs(itemButtons) do ib.ZIndex = 53 end
+            task.defer(updateCanvas)
         else
             TweenService:Create(list, TweenInfo.new(0.15), {Size = UDim2.new(0, 115, 0, 0)}):Play()
+            task.delay(0.15, function()
+                if not expanded then
+                    frame.ZIndex = 5
+                    btn.ZIndex = 6
+                    list.ZIndex = 20
+                end
+            end)
         end
     end)
 
@@ -538,7 +572,6 @@ local function createButton(parent, text, callback)
     btn.MouseButton1Click:Connect(function() if callback then callback() end end)
     return btn
 end
-
 -- ============================================================
 -- НАПОЛНЕНИЕ: FARM
 -- ============================================================
