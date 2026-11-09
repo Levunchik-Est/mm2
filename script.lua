@@ -745,7 +745,6 @@ local function pickTarget(items, fromPos)
     return best
 end
 
--- Отключаем коллизии на время фарма (чтобы летать сквозь стены)
 local function setNoCollide(on)
     local char = LocalPlayer.Character
     if not char then return end
@@ -756,33 +755,60 @@ local function setNoCollide(on)
     end
 end
 
-local function applyFlyMovement(targetPos, lying)
-    local hrp = getHRP()
-    local hum = getHumanoid()
-    if not hrp or not hum then return end
-    hum.PlatformStand = true
-    if lying then
-        hrp.CFrame = CFrame.new(hrp.Position, targetPos) * CFrame.Angles(0, 0, math.rad(90))
+-- Ждём, пока персонаж реально стоит на земле (не в воздухе)
+local function waitOnGround(timeout)
+    local deadline = tick() + (timeout or 3)
+    while tick() < deadline do
+        local hum = getHumanoid()
+        if hum and hum.FloorMaterial ~= Enum.Material.Air then
+            return true
+        end
+        task.wait(0.1)
     end
-    local dir = (targetPos - hrp.Position)
-    if dir.Magnitude < 0.5 then return end
-    local speed = State.FarmSpeed
-    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
-    hrp.CFrame = hrp.CFrame + step
+    return false
 end
 
--- Underground: ставим ОДИН раз, без удержания каждый кадр.
--- Гравитацию гасим через PlatformStand + velocity = 0.
+-- Fly: жёстко держим Y = fixedY КАЖДЫЙ КАДР (внутри цикла).
+-- Двигаем только X/Z к цели.
+local function flyStepTo(targetPos, lying, fixedY)
+    local hrp = getHRP()
+    local hum = getHumanoid()
+    if not hrp or not hum then return false end
+
+    local current = hrp.Position
+    local destXZ = Vector3.new(targetPos.X, fixedY, targetPos.Z)
+    local curXZ  = Vector3.new(current.X,  fixedY, current.Z)
+    local dir = destXZ - curXZ
+
+    if dir.Magnitude < 0.5 then
+        hrp.CFrame = CFrame.new(Vector3.new(current.X, fixedY, current.Z))
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        return true
+    end
+
+    local speed = State.FarmSpeed
+    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
+    local newPos = Vector3.new(
+        current.X + step.X,
+        fixedY,
+        current.Z + step.Z
+    )
+
+    local newCF = CFrame.new(newPos, Vector3.new(targetPos.X, fixedY, targetPos.Z))
+    if lying then
+        newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
+    end
+    hrp.CFrame = newCF
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    return false
+end
+
 local function applyTeleportUnderground(targetPos)
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum then return end
-    hum.PlatformStand = true
-    -- Ставим ПОД предметом так, чтобы голова касалась его.
-    -- Смещение -4.5 (меньше, чем -6) — чтобы не упираться в потолок пола.
     hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y - 4.5, targetPos.Z)
     hrp.AssemblyLinearVelocity = Vector3.zero
-    -- Разово гасим скорость через короткий форс, но НЕ каждый кадр
     local bv = Instance.new("BodyVelocity")
     bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
     bv.Velocity = Vector3.zero
@@ -794,7 +820,6 @@ local function applyTeleportNormal(targetPos)
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum then return end
-    hum.PlatformStand = true
     hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
     hrp.AssemblyLinearVelocity = Vector3.zero
 end
@@ -813,17 +838,34 @@ end
 function startAutoFarm()
     stopAutoFarm()
     farmCollected = {}
-    setNoCollide(true)   -- отключаем стены для всех режимов
     State._farmThread = task.spawn(function()
+        -- Ждём, пока персонаж окажется на земле, прежде чем что-то делать
+        waitOnGround(3)
+        local hrp = getHRP()
+        if not hrp then return end
+
+        -- Фиксируем высоту ПОКА СТОИМ НА ЗЕМЛЕ, +2 studs
+        local fixedY = hrp.Position.Y + 2
+        -- Только теперь отключаем коллизии и ставим PlatformStand
+        setNoCollide(true)
+        local hum = getHumanoid()
+        if hum then hum.PlatformStand = true end
+
         while State.AutoFarm and not State._closed do
-            local hrp = getHRP()
+            hrp = getHRP()
             if not hrp then
                 task.wait(0.5)
             else
+                -- Принудительно держим высоту даже в простое
+                if (hrp.Position.Y - fixedY) > 0.5 or (fixedY - hrp.Position.Y) > 0.5 then
+                    hrp.CFrame = CFrame.new(hrp.Position.X, fixedY, hrp.Position.Z)
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                end
+
                 local items = findItems()
                 local target = pickTarget(items, hrp.Position)
                 if not target then
-                    task.wait(0.5)
+                    task.wait(0.3)
                 else
                     local mode = State.FarmMode
                     if mode == "Teleport" then
@@ -840,10 +882,12 @@ function startAutoFarm()
                         local lying = (mode == "Fly — лежа")
                         local deadline = tick() + 3
                         while State.AutoFarm and not State._closed and target.Parent do
-                            local dist = (target.Position - hrp.Position).Magnitude
-                            if dist < 2 then break end
+                            local dx = target.Position.X - hrp.Position.X
+                            local dz = target.Position.Z - hrp.Position.Z
+                            local distXZ = math.sqrt(dx*dx + dz*dz)
+                            if distXZ < 3 then break end
                             if tick() > deadline then break end
-                            applyFlyMovement(target.Position, lying)
+                            flyStepTo(target.Position, lying, fixedY)
                             task.wait()
                         end
                         farmCollected[target] = true
@@ -861,7 +905,6 @@ function stopAutoFarm()
         State._farmThread = nil
     end
     farmCollected = {}
-    -- Возвращаем коллизии и обычное положение
     setNoCollide(false)
     local hum = getHumanoid()
     if hum then hum.PlatformStand = false end
