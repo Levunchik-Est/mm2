@@ -760,13 +760,30 @@ local function applyFlyMovement(targetPos, lying)
     hrp.CFrame = hrp.CFrame + step
 end
 
+-- Телепорт + удержание позиции под полом
 local function applyTeleport(targetPos, underground)
     local hrp = getHRP()
     if not hrp then return end
     if underground then
-        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y - 6, targetPos.Z)
+        -- Ставим ровно под предметом, чтобы голова касалась его
+        local fixedCFrame = CFrame.new(targetPos.X, targetPos.Y - 6, targetPos.Z)
+        hrp.CFrame = fixedCFrame
+        -- Удерживаем позицию каждые 0.05 сек, пока не соберём
+        local holdUntil = tick() + 2.5
+        local holdThread = task.spawn(function()
+            while tick() < holdUntil and State.AutoFarm and not State._closed do
+                local h = getHRP()
+                if h then
+                    h.CFrame = fixedCFrame
+                    h.AssemblyLinearVelocity = Vector3.zero
+                end
+                task.wait(0.05)
+            end
+        end)
+        return holdThread
     else
         hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
+        return nil
     end
 end
 
@@ -799,15 +816,13 @@ function startAutoFarm()
                     local mode = State.FarmMode
                     if mode == "Teleport" or mode == "Underground Teleport" then
                         -- Телепорт ровно ОДИН раз к цели
-                        applyTeleport(target.Position, mode == "Underground Teleport")
+                        local holdThread = applyTeleport(target.Position, mode == "Underground Teleport")
                         -- Ждём, пока предмет исчезнет (значит, собран)
                         local collected = waitItemCollected(target, 2)
-                        if collected then
-                            farmCollected[target] = true
-                        else
-                            -- Не собрался — помечаем, чтобы не телепортироваться снова
-                            farmCollected[target] = true
+                        if holdThread then
+                            pcall(function() task.cancel(holdThread) end)
                         end
+                        farmCollected[target] = true
                         -- Пауза между телепортами
                         task.wait(2)
                     else
