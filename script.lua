@@ -693,34 +693,6 @@ trackConn(Players.PlayerRemoving:Connect(function() task.wait(0.5); refreshPlaye
 task.spawn(function() task.wait(1); refreshPlayerDropdowns() end)
 
 -- ============================================================
--- ANTI-AFK
--- ============================================================
-function startAntiAFK()
-    stopAntiAFK()
-    State._antiAFKThread = task.spawn(function()
-        while State.AntiAFK and not State._closed do
-            task.wait(300) -- 5 минут, безопасный интервал
-            if not State.AntiAFK or State._closed then break end
-            pcall(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton1(Vector2.new(0, 0))
-                -- дополнительно сбрасываем "idle" через InputBegan
-                if LocalPlayer.Idled then
-                    LocalPlayer:Idled()
-                end
-            end)
-        end
-    end)
-end
-
-function stopAntiAFK()
-    if State._antiAFKThread then
-        pcall(function() task.cancel(State._antiAFKThread) end)
-        State._antiAFKThread = nil
-    end
-end
-
--- ============================================================
 -- AUTO FARM (переписан с нуля по ТЗ)
 -- ============================================================
 local farmCollected = {}          -- [Instance] = true  — уже собрано
@@ -728,6 +700,7 @@ local farmAttempts  = {}          -- [Instance] = number — сколько по
 local MAX_ATTEMPTS  = 3           -- попыток на одну конфету
 local FARM_TP_INTERVAL = 2        -- строго 2 секунды
 local FARM_SPEED_DEFAULT = 35     -- синхронизировано со слайдером (10–60, дефолт 35)
+local NO_PHYSICS = 11             -- Enum.HumanoidStateType.StrafingNoPhysics
 
 -- Инициализация значений в State (если их ещё нет)
 State.FarmSpeed = State.FarmSpeed or FARM_SPEED_DEFAULT
@@ -774,55 +747,54 @@ local function pickTarget(items, fromPos)
 end
 
 -- ------------------------------------------------------------
--- Полное отключение физики персонажа на время движения
+-- NO-PHYSICS: держим Humanoid в состоянии StrafingNoPhysics
+-- Это отключает коллизии на уровне движка, а не CanCollide
 -- ------------------------------------------------------------
-local function disablePhysics()
-    local hum = getHumanoid()
-    local hrp = getHRP()
-    if not hum or not hrp then return end
-    hum.PlatformStand = true
-    hum.WalkSpeed = 0
-    hum.JumpPower = 0
-    for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            pcall(function()
-                part.CanCollide = false
-                part.CanTouch = false
-            end)
-        end
-    end
-    hrp.AssemblyLinearVelocity = Vector3.zero
-end
-
-local function enablePhysics()
-    local hum = getHumanoid()
-    local hrp = getHRP()
-    if not hum then return end
-    hum.PlatformStand = false
-    hum.WalkSpeed = 16
-    hum.JumpPower = 50
-    if LocalPlayer.Character then
-        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+local _noPhysicsThread = nil
+local function startNoPhysics()
+    if _noPhysicsThread then return end
+    _noPhysicsThread = task.spawn(function()
+        while State.AutoFarm and not State._closed do
+            local hum = getHumanoid()
+            if hum then
                 pcall(function()
-                    part.CanCollide = true
-                    part.CanTouch = true
+                    hum:ChangeState(NO_PHYSICS)
                 end)
             end
+            task.wait(0.05) -- держим состояние, не спамим каждый кадр
         end
+        _noPhysicsThread = nil
+    end)
+end
+
+local function stopNoPhysics()
+    if _noPhysicsThread then
+        pcall(function() task.cancel(_noPhysicsThread) end)
+        _noPhysicsThread = nil
     end
-    if hrp then
-        pcall(function() hrp.CanCollide = false end)
-        hrp.AssemblyLinearVelocity = Vector3.zero
+    local hum = getHumanoid()
+    if hum then
+        pcall(function()
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end)
     end
 end
 
+-- ------------------------------------------------------------
 -- Приземление: ставим персонажа на ближайшую поверхность
+-- ------------------------------------------------------------
 local function landOnGround()
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum then return end
-    enablePhysics()
+    hum.PlatformStand = false
+    if LocalPlayer.Character then
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                pcall(function() part.CanCollide = true end)
+            end
+        end
+    end
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {LocalPlayer.Character}
@@ -831,33 +803,6 @@ local function landOnGround()
         hrp.CFrame = CFrame.new(ray.Position + Vector3.new(0, 3.5, 0))
     end
     hrp.AssemblyLinearVelocity = Vector3.zero
-end
-
--- ------------------------------------------------------------
--- AlignPosition-тяга: сервер сам тянет персонажа (не телепорт)
--- ------------------------------------------------------------
-local function createPull(hrp)
-    local att = Instance.new("Attachment")
-    att.Name = "MM2_Farm_Att"
-    att.Parent = hrp
-
-    local align = Instance.new("AlignPosition")
-    align.Name = "MM2_Farm_Align"
-    align.Attachment0 = att
-    align.Mode = Enum.PositionAlignmentMode.OneAttachment
-    align.Responsiveness = 200
-    align.MaxForce = 1e7
-    align.MaxVelocity = math.huge
-    align.ApplyAtCenterOfMass = true
-    align.Position = hrp.Position
-    align.Parent = hrp
-
-    return align, att
-end
-
-local function destroyPull(align, att)
-    if align then pcall(function() align:Destroy() end) end
-    if att then pcall(function() att:Destroy() end) end
 end
 
 -- ------------------------------------------------------------
@@ -896,7 +841,6 @@ local function doTeleportUnderground(targetPos)
     local HEAD_OFFSET = 1.5
     local desiredHRP_Y = targetPos.Y - HEAD_OFFSET
 
-    -- Проверка потолка: если близко — опускаем
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {LocalPlayer.Character}
@@ -909,12 +853,11 @@ local function doTeleportUnderground(targetPos)
         desiredHRP_Y = ray.Position.Y - HEAD_OFFSET - 0.5
     end
 
-    disablePhysics()
     local fixedCF = CFrame.new(targetPos.X, desiredHRP_Y, targetPos.Z)
     hrp.CFrame = fixedCF
     hrp.AssemblyLinearVelocity = Vector3.zero
+    hum.PlatformStand = true
 
-    -- Держим жёстко, БЕЗ падения (гравитация выключена)
     local holdThread = task.spawn(function()
         local deadline = tick() + 2
         while tick() < deadline and State.AutoFarm and not State._closed do
@@ -924,37 +867,39 @@ local function doTeleportUnderground(targetPos)
             h.AssemblyLinearVelocity = Vector3.zero
             task.wait(0.03)
         end
-        if State.AutoFarm and not State._closed then
-            landOnGround()
-        end
     end)
     return holdThread
 end
 
 -- ------------------------------------------------------------
--- FLY через AlignPosition — сквозь стены без «упора»
--- Возвращает true, если долетели до цели.
+-- FLY: движение CFrame в состоянии NoPhysics (сквозь стены)
+-- Возвращает true при прибытии.
 -- ------------------------------------------------------------
-local function doFlyAlign(targetPos, lying, fixedY, align)
+local function doFlyStep(targetPos, lying, fixedY)
     local hrp = getHRP()
     local hum = getHumanoid()
-    if not hrp or not hum or not align then return false end
+    if not hrp or not hum then return false end
 
-    local goal = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    align.Position = goal
-
-    -- Ориентация: смотрим на цель (лежа — поворот на бок)
-    local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local cf = CFrame.new(hrp.Position, lookAt)
-    if lying then
-        cf = cf * CFrame.Angles(0, 0, math.rad(90))
-    end
-    hrp.CFrame = cf
-
-    local dist = (Vector3.new(hrp.Position.X, fixedY, hrp.Position.Z) - goal).Magnitude
-    if dist < 2 then
+    local current = hrp.Position
+    local dir = Vector3.new(targetPos.X - current.X, 0, targetPos.Z - current.Z)
+    if dir.Magnitude < 2 then
         return true
     end
+
+    local speed = State.FarmSpeed
+    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
+    local newX = current.X + step.X
+    local newZ = current.Z + step.Z
+
+    local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
+    local newCF = CFrame.new(Vector3.new(newX, fixedY, newZ), lookAt)
+    if lying then
+        newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
+    end
+    hrp.CFrame = newCF
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    -- Держим NoPhysics каждый шаг (сервер может сбросить состояние)
+    pcall(function() hum:ChangeState(NO_PHYSICS) end)
     return false
 end
 
@@ -965,6 +910,7 @@ function startAutoFarm()
     stopAutoFarm()
     farmCollected = {}
     farmAttempts = {}
+    startNoPhysics() -- включаем StrafingNoPhysics на весь фарм
 
     State._farmThread = task.spawn(function()
         while State.AutoFarm and not State._closed do
@@ -972,13 +918,11 @@ function startAutoFarm()
             local hum = getHumanoid()
 
             if not hrp or not hum or hum.Health <= 0 then
-                landOnGround()
                 task.wait(0.5)
             else
                 local items = findItems()
 
                 if #items == 0 then
-                    enablePhysics()
                     task.wait(0.4)
                 else
                     local target = pickTarget(items, hrp.Position)
@@ -1003,12 +947,11 @@ function startAutoFarm()
                             local hold = doTeleportUnderground(target.Position)
                             waitCollected(target, 1.5)
                             if hold then pcall(function() task.cancel(hold) end) end
-                            landOnGround()
                             farmCollected[target] = true
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
-                        -- FLY (Lying / Standing) — сквозь стены через AlignPosition
+                        -- FLY (Lying / Standing) — NoPhysics + CFrame
                         -------------------------------------------------
                         else
                             local lying = (mode == "Fly Lying")
@@ -1019,20 +962,14 @@ function startAutoFarm()
                                 fixedY = hrp.Position.Y
                             end
 
-                            disablePhysics()
-                            local align, att = createPull(hrp)
-
                             local deadline = tick() + 8
                             while State.AutoFarm and not State._closed and target.Parent do
                                 if tick() > deadline then break end
-                                if doFlyAlign(target.Position, lying, fixedY, align) then
+                                if doFlyStep(target.Position, lying, fixedY) then
                                     break
                                 end
                                 task.wait()
                             end
-
-                            destroyPull(align, att)
-                            landOnGround()
 
                             local ok = waitCollected(target, 1.0)
                             if ok then
@@ -1050,8 +987,6 @@ function startAutoFarm()
                 end
             end
         end
-
-        landOnGround()
     end)
 end
 
@@ -1060,19 +995,11 @@ function stopAutoFarm()
         pcall(function() task.cancel(State._farmThread) end)
         State._farmThread = nil
     end
-    -- Убираем возможные остатки AlignPosition/Attachment
-    local hrp = getHRP()
-    if hrp then
-        local oldAlign = hrp:FindFirstChild("MM2_Farm_Align")
-        if oldAlign then pcall(function() oldAlign:Destroy() end) end
-        local oldAtt = hrp:FindFirstChild("MM2_Farm_Att")
-        if oldAtt then pcall(function() oldAtt:Destroy() end) end
-    end
+    stopNoPhysics()
     farmCollected = {}
     farmAttempts = {}
     landOnGround()
 end
-
 -- ============================================================
 -- ESP ROLES (подсветка тела сквозь стены)
 -- ============================================================
