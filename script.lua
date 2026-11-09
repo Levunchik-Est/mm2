@@ -712,7 +712,7 @@ end
 -- ============================================================
 -- AUTO FARM
 -- ============================================================
-local farmCollected = {}   -- [Instance] = true — уже собрано/обработано
+local farmCollected = {}
 
 local function findItems()
     local items = {}
@@ -745,12 +745,23 @@ local function pickTarget(items, fromPos)
     return best
 end
 
+-- Отключаем коллизии на время фарма (чтобы летать сквозь стены)
+local function setNoCollide(on)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function() part.CanCollide = not on end)
+        end
+    end
+end
+
 local function applyFlyMovement(targetPos, lying)
     local hrp = getHRP()
     local hum = getHumanoid()
     if not hrp or not hum then return end
+    hum.PlatformStand = true
     if lying then
-        hum.PlatformStand = true
         hrp.CFrame = CFrame.new(hrp.Position, targetPos) * CFrame.Angles(0, 0, math.rad(90))
     end
     local dir = (targetPos - hrp.Position)
@@ -760,34 +771,34 @@ local function applyFlyMovement(targetPos, lying)
     hrp.CFrame = hrp.CFrame + step
 end
 
--- Телепорт + удержание позиции под полом
-local function applyTeleport(targetPos, underground)
+-- Underground: ставим ОДИН раз, без удержания каждый кадр.
+-- Гравитацию гасим через PlatformStand + velocity = 0.
+local function applyTeleportUnderground(targetPos)
     local hrp = getHRP()
-    if not hrp then return end
-    if underground then
-        -- Ставим ровно под предметом, чтобы голова касалась его
-        local fixedCFrame = CFrame.new(targetPos.X, targetPos.Y - 6, targetPos.Z)
-        hrp.CFrame = fixedCFrame
-        -- Удерживаем позицию каждые 0.05 сек, пока не соберём
-        local holdUntil = tick() + 2.5
-        local holdThread = task.spawn(function()
-            while tick() < holdUntil and State.AutoFarm and not State._closed do
-                local h = getHRP()
-                if h then
-                    h.CFrame = fixedCFrame
-                    h.AssemblyLinearVelocity = Vector3.zero
-                end
-                task.wait(0.05)
-            end
-        end)
-        return holdThread
-    else
-        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
-        return nil
-    end
+    local hum = getHumanoid()
+    if not hrp or not hum then return end
+    hum.PlatformStand = true
+    -- Ставим ПОД предметом так, чтобы голова касалась его.
+    -- Смещение -4.5 (меньше, чем -6) — чтобы не упираться в потолок пола.
+    hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y - 4.5, targetPos.Z)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    -- Разово гасим скорость через короткий форс, но НЕ каждый кадр
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    bv.Velocity = Vector3.zero
+    bv.Parent = hrp
+    task.delay(0.4, function() pcall(function() bv:Destroy() end) end)
 end
 
--- Ждём, пока предмет исчезнет (собран) или таймаут
+local function applyTeleportNormal(targetPos)
+    local hrp = getHRP()
+    local hum = getHumanoid()
+    if not hrp or not hum then return end
+    hum.PlatformStand = true
+    hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
+    hrp.AssemblyLinearVelocity = Vector3.zero
+end
+
 local function waitItemCollected(item, timeout)
     local deadline = tick() + (timeout or 2)
     while tick() < deadline do
@@ -802,6 +813,7 @@ end
 function startAutoFarm()
     stopAutoFarm()
     farmCollected = {}
+    setNoCollide(true)   -- отключаем стены для всех режимов
     State._farmThread = task.spawn(function()
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
@@ -814,16 +826,15 @@ function startAutoFarm()
                     task.wait(0.5)
                 else
                     local mode = State.FarmMode
-                    if mode == "Teleport" or mode == "Underground Teleport" then
-                        -- Телепорт ровно ОДИН раз к цели
-                        local holdThread = applyTeleport(target.Position, mode == "Underground Teleport")
-                        -- Ждём, пока предмет исчезнет (значит, собран)
-                        local collected = waitItemCollected(target, 2)
-                        if holdThread then
-                            pcall(function() task.cancel(holdThread) end)
-                        end
+                    if mode == "Teleport" then
+                        applyTeleportNormal(target.Position)
+                        waitItemCollected(target, 2)
                         farmCollected[target] = true
-                        -- Пауза между телепортами
+                        task.wait(2)
+                    elseif mode == "Underground Teleport" then
+                        applyTeleportUnderground(target.Position)
+                        waitItemCollected(target, 2)
+                        farmCollected[target] = true
                         task.wait(2)
                     else
                         local lying = (mode == "Fly — лежа")
@@ -850,6 +861,10 @@ function stopAutoFarm()
         State._farmThread = nil
     end
     farmCollected = {}
+    -- Возвращаем коллизии и обычное положение
+    setNoCollide(false)
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = false end
 end
 
 -- ============================================================
