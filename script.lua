@@ -755,21 +755,6 @@ local function setNoCollide(on)
     end
 end
 
--- Ждём, пока персонаж реально стоит на земле (не в воздухе)
-local function waitOnGround(timeout)
-    local deadline = tick() + (timeout or 3)
-    while tick() < deadline do
-        local hum = getHumanoid()
-        if hum and hum.FloorMaterial ~= Enum.Material.Air then
-            return true
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
--- Fly: жёстко держим Y = fixedY КАЖДЫЙ КАДР (внутри цикла).
--- Двигаем только X/Z к цели.
 local function flyStepTo(targetPos, lying, fixedY)
     local hrp = getHRP()
     local hum = getHumanoid()
@@ -788,12 +773,7 @@ local function flyStepTo(targetPos, lying, fixedY)
 
     local speed = State.FarmSpeed
     local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
-    local newPos = Vector3.new(
-        current.X + step.X,
-        fixedY,
-        current.Z + step.Z
-    )
-
+    local newPos = Vector3.new(current.X + step.X, fixedY, current.Z + step.Z)
     local newCF = CFrame.new(newPos, Vector3.new(targetPos.X, fixedY, targetPos.Z))
     if lying then
         newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
@@ -839,59 +819,76 @@ function startAutoFarm()
     stopAutoFarm()
     farmCollected = {}
     State._farmThread = task.spawn(function()
-        -- Ждём, пока персонаж окажется на земле, прежде чем что-то делать
-        waitOnGround(3)
-        local hrp = getHRP()
-        if not hrp then return end
-
-        -- Фиксируем высоту ПОКА СТОИМ НА ЗЕМЛЕ, +2 studs
-        local fixedY = hrp.Position.Y + 2
-        -- Только теперь отключаем коллизии и ставим PlatformStand
-        setNoCollide(true)
-        local hum = getHumanoid()
-        if hum then hum.PlatformStand = true end
+        local roundActive = false
+        local roundStart = 0
+        local PREP_TIME = 10     -- секунд подготовки после появления конфет
+        local TP_INTERVAL = 2    -- секунд между телепортами
 
         while State.AutoFarm and not State._closed do
-            hrp = getHRP()
+            local hrp = getHRP()
             if not hrp then
                 task.wait(0.5)
             else
-                -- Принудительно держим высоту даже в простое
-                if (hrp.Position.Y - fixedY) > 0.5 or (fixedY - hrp.Position.Y) > 0.5 then
-                    hrp.CFrame = CFrame.new(hrp.Position.X, fixedY, hrp.Position.Z)
-                    hrp.AssemblyLinearVelocity = Vector3.zero
-                end
-
                 local items = findItems()
-                local target = pickTarget(items, hrp.Position)
-                if not target then
-                    task.wait(0.3)
+
+                -- 1. Конфет нет → лобби / конец раунда. Стоим, ничего не делаем.
+                if #items == 0 then
+                    roundActive = false
+                    roundStart = 0
+                    setNoCollide(false)
+                    local hum = getHumanoid()
+                    if hum then hum.PlatformStand = false end
+                    task.wait(0.5)
                 else
-                    local mode = State.FarmMode
-                    if mode == "Teleport" then
-                        applyTeleportNormal(target.Position)
-                        waitItemCollected(target, 2)
-                        farmCollected[target] = true
-                        task.wait(2)
-                    elseif mode == "Underground Teleport" then
-                        applyTeleportUnderground(target.Position)
-                        waitItemCollected(target, 2)
-                        farmCollected[target] = true
-                        task.wait(2)
+                    -- 2. Конфеты появились впервые → старт раунда, сброс собранного
+                    if not roundActive then
+                        roundActive = true
+                        roundStart = tick()
+                        farmCollected = {}
+                    end
+
+                    -- 3. Идёт подготовка — стоим, не телепортируемся
+                    local elapsed = tick() - roundStart
+                    if elapsed < PREP_TIME then
+                        task.wait(0.3)
                     else
-                        local lying = (mode == "Fly — лежа")
-                        local deadline = tick() + 3
-                        while State.AutoFarm and not State._closed and target.Parent do
-                            local dx = target.Position.X - hrp.Position.X
-                            local dz = target.Position.Z - hrp.Position.Z
-                            local distXZ = math.sqrt(dx*dx + dz*dz)
-                            if distXZ < 3 then break end
-                            if tick() > deadline then break end
-                            flyStepTo(target.Position, lying, fixedY)
-                            task.wait()
+                        -- 4. Подготовка прошла → телепорт к конфете раз в TP_INTERVAL
+                        local mode = State.FarmMode
+                        local target = pickTarget(items, hrp.Position)
+                        if not target then
+                            task.wait(0.3)
+                        else
+                            if mode == "Teleport" then
+                                applyTeleportNormal(target.Position)
+                                waitItemCollected(target, 2)
+                                farmCollected[target] = true
+                                task.wait(TP_INTERVAL)
+                            elseif mode == "Underground Teleport" then
+                                applyTeleportUnderground(target.Position)
+                                waitItemCollected(target, 2)
+                                farmCollected[target] = true
+                                task.wait(TP_INTERVAL)
+                            else
+                                -- Fly-режимы
+                                local lying = (mode == "Fly — лежа")
+                                setNoCollide(true)
+                                local hum = getHumanoid()
+                                if hum then hum.PlatformStand = true end
+                                local fixedY = hrp.Position.Y + 2
+                                local deadline = tick() + 3
+                                while State.AutoFarm and not State._closed and target.Parent do
+                                    local dx = target.Position.X - hrp.Position.X
+                                    local dz = target.Position.Z - hrp.Position.Z
+                                    local distXZ = math.sqrt(dx*dx + dz*dz)
+                                    if distXZ < 3 then break end
+                                    if tick() > deadline then break end
+                                    flyStepTo(target.Position, lying, fixedY)
+                                    task.wait()
+                                end
+                                farmCollected[target] = true
+                                task.wait(TP_INTERVAL)
+                            end
                         end
-                        farmCollected[target] = true
-                        task.wait(0.1)
                     end
                 end
             end
