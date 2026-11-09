@@ -583,7 +583,14 @@ createToggle(farmContent, "Auto Farm", false, function(v)
 end)
 
 createDropdown(farmContent, "Режим движения", {"Fly — лежа", "Fly — стоя", "Teleport", "Underground Teleport"}, "Fly — лежа", function(v)
-    State.FarmMode = v
+    -- Приводим отображаемое значение к внутреннему ключу
+    local map = {
+        ["Fly — лежа"] = "Fly Lying",
+        ["Fly — стоя"] = "Fly Standing",
+        ["Teleport"] = "Teleport",
+        ["Underground Teleport"] = "Underground Teleport",
+    }
+    State.FarmMode = map[v] or "Fly Lying"
 end)
 
 createSlider(farmContent, "Скорость (10–60 studs/s)", 10, 60, 35, function(v) State.FarmSpeed = v end)
