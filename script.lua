@@ -1320,6 +1320,19 @@ floatingIcon.MouseButton1Click:Connect(function()
     mainFrame.Visible = true
 end)
 
+local function disconnectAll()
+    for _, c in ipairs(State._connections) do
+        pcall(function()
+            if typeof(c) == "RBXScriptConnection" then
+                c:Disconnect()
+            elseif type(c) == "table" and c.Disconnect then
+                c.Disconnect()
+            end
+        end)
+    end
+    State._connections = {}
+end
+
 function fullShutdown()
     State._closed = true
     State.AutoFarm = false
@@ -1347,6 +1360,13 @@ end
 closeBtn.MouseButton1Click:Connect(function()
     fullShutdown()
 end)
+
+-- ============================================================
+-- ОЧИСТКА ПРИ ВЫХОДЕ
+-- ============================================================
+trackConn(LocalPlayer.OnTeleport:Connect(function()
+    -- Не отключаем при телепорте, только при явном закрытии
+end))
 
 -- ============================================================
 -- ОЧИСТКА ПРИ ВЫХОДЕ
