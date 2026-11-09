@@ -834,6 +834,33 @@ local function landOnGround()
 end
 
 -- ------------------------------------------------------------
+-- AlignPosition-тяга: сервер сам тянет персонажа (не телепорт)
+-- ------------------------------------------------------------
+local function createPull(hrp)
+    local att = Instance.new("Attachment")
+    att.Name = "MM2_Farm_Att"
+    att.Parent = hrp
+
+    local align = Instance.new("AlignPosition")
+    align.Name = "MM2_Farm_Align"
+    align.Attachment0 = att
+    align.Mode = Enum.PositionAlignmentMode.OneAttachment
+    align.Responsiveness = 200
+    align.MaxForce = 1e7
+    align.MaxVelocity = math.huge
+    align.ApplyAtCenterOfMass = true
+    align.Position = hrp.Position
+    align.Parent = hrp
+
+    return align, att
+end
+
+local function destroyPull(align, att)
+    if align then pcall(function() align:Destroy() end) end
+    if att then pcall(function() att:Destroy() end) end
+end
+
+-- ------------------------------------------------------------
 -- Проверка успешного сбора
 -- ------------------------------------------------------------
 local function waitCollected(item, timeout)
@@ -905,28 +932,29 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY — мгновенный проход сквозь стены (без «упора»)
+-- FLY через AlignPosition — сквозь стены без «упора»
+-- Возвращает true, если долетели до цели.
 -- ------------------------------------------------------------
-local function doFlyStep(targetPos, lying, fixedY)
+local function doFlyAlign(targetPos, lying, fixedY, align)
     local hrp = getHRP()
     local hum = getHumanoid()
-    if not hrp or not hum then return false end
+    if not hrp or not hum or not align then return false end
 
-    local current = hrp.Position
-    local dir = Vector3.new(targetPos.X - current.X, 0, targetPos.Z - current.Z)
-    if dir.Magnitude < 2 then
+    local goal = Vector3.new(targetPos.X, fixedY, targetPos.Z)
+    align.Position = goal
+
+    -- Ориентация: смотрим на цель (лежа — поворот на бок)
+    local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
+    local cf = CFrame.new(hrp.Position, lookAt)
+    if lying then
+        cf = cf * CFrame.Angles(0, 0, math.rad(90))
+    end
+    hrp.CFrame = cf
+
+    local dist = (Vector3.new(hrp.Position.X, fixedY, hrp.Position.Z) - goal).Magnitude
+    if dist < 2 then
         return true
     end
-
-    -- Мгновенный шаг: сервер не успевает откатить
-    local newPos = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local newCF = CFrame.new(newPos, lookAt)
-    if lying then
-        newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
-    end
-    hrp.CFrame = newCF
-    hrp.AssemblyLinearVelocity = Vector3.zero
     return false
 end
 
@@ -980,7 +1008,7 @@ function startAutoFarm()
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
-                        -- FLY (Lying / Standing) — сквозь стены
+                        -- FLY (Lying / Standing) — сквозь стены через AlignPosition
                         -------------------------------------------------
                         else
                             local lying = (mode == "Fly Lying")
@@ -991,18 +1019,20 @@ function startAutoFarm()
                                 fixedY = hrp.Position.Y
                             end
 
-                            disablePhysics() -- гравитация + коллизии + скорость
+                            disablePhysics()
+                            local align, att = createPull(hrp)
 
-                            local deadline = tick() + 5
+                            local deadline = tick() + 8
                             while State.AutoFarm and not State._closed and target.Parent do
                                 if tick() > deadline then break end
-                                if doFlyStep(target.Position, lying, fixedY) then
+                                if doFlyAlign(target.Position, lying, fixedY, align) then
                                     break
                                 end
-                                task.wait(0.02) -- короткий шаг, не каждый кадр
+                                task.wait()
                             end
 
-                            landOnGround() -- возврат физики + приземление
+                            destroyPull(align, att)
+                            landOnGround()
 
                             local ok = waitCollected(target, 1.0)
                             if ok then
@@ -1029,6 +1059,14 @@ function stopAutoFarm()
     if State._farmThread then
         pcall(function() task.cancel(State._farmThread) end)
         State._farmThread = nil
+    end
+    -- Убираем возможные остатки AlignPosition/Attachment
+    local hrp = getHRP()
+    if hrp then
+        local oldAlign = hrp:FindFirstChild("MM2_Farm_Align")
+        if oldAlign then pcall(function() oldAlign:Destroy() end) end
+        local oldAtt = hrp:FindFirstChild("MM2_Farm_Att")
+        if oldAtt then pcall(function() oldAtt:Destroy() end) end
     end
     farmCollected = {}
     farmAttempts = {}
