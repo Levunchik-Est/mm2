@@ -1135,7 +1135,8 @@ function startNicknames()
         if State.ShowNicknames then createNicknameForPlayer(plr) end
     end))
     trackConn(Players.PlayerRemoving:Connect(function(plr) removeNicknameForPlayer(plr) end))
-    local loop = task.spawn(function()
+
+    State._nicknameThread = task.spawn(function()
         while State.ShowNicknames and not State._closed do
             task.wait(1)
             for _, plr in ipairs(Players:GetPlayers()) do
@@ -1145,10 +1146,13 @@ function startNicknames()
             end
         end
     end)
-    table.insert(State._connections, {Disconnect = function() task.cancel(loop) end})
 end
 
 function stopNicknames()
+    if State._nicknameThread then
+        pcall(function() task.cancel(State._nicknameThread) end)
+        State._nicknameThread = nil
+    end
     for plr, data in pairs(State._nicknameObjects) do
         pcall(function() data.billboard:Destroy() end)
     end
