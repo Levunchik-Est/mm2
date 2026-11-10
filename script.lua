@@ -721,10 +721,12 @@ local farmCollected = {}          -- [Instance] = true  — уже собран�
 local farmAttempts  = {}          -- [Instance] = number — сколько попыток
 local MAX_ATTEMPTS  = 3           -- попыток на одну конфету
 local FARM_TP_INTERVAL = 2        -- строго 2 секунды
-local FARM_SPEED_DEFAULT = 35     -- синхронизировано со слайдером (10–60, дефолт 35)
+local FARM_SPEED_DEFAULT = 25
 
 -- Инициализация значений в State (если их ещё нет)
-State.FarmSpeed = State.FarmSpeed or FARM_SPEED_DEFAULT
+if State.FarmSpeed == nil or State.FarmSpeed == 35 then
+    State.FarmSpeed = FARM_SPEED_DEFAULT
+end
 State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
 
@@ -768,56 +770,25 @@ local function pickTarget(items, fromPos)
 end
 
 -- ------------------------------------------------------------
--- Noclip: держим CanCollide=false на всех частях персонажа
+-- Безопасное включение/выключение физики
 -- ------------------------------------------------------------
-local _noclipConn = nil
-local function startNoclip()
-    if _noclipConn then return end
-    _noclipConn = RunService.Stepped:Connect(function()
-        local char = LocalPlayer.Character
-        if not char then return end
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                if part.CanCollide then part.CanCollide = false end
-            end
+local function setNoCollide(on)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function() part.CanCollide = not on end)
         end
-    end)
-end
-
-local function stopNoclip()
-    if _noclipConn then
-        pcall(function() _noclipConn:Disconnect() end)
-        _noclipConn = nil
     end
 end
 
--- ------------------------------------------------------------
--- Приземление: ставим персонажа на ближайшую поверхность
--- ------------------------------------------------------------
-local function landOnGround()
-    local hrp = getHRP()
+local function freezeForFly(on)
     local hum = getHumanoid()
-    if not hrp or not hum then return end
-    hum.PlatformStand = false
-    if LocalPlayer.Character then
-        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                pcall(function() part.CanCollide = true end)
-            end
-        end
-    end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {LocalPlayer.Character}
-    local ray = Workspace:Raycast(hrp.Position, Vector3.new(0, -200, 0), params)
-    if ray then
-        hrp.CFrame = CFrame.new(ray.Position + Vector3.new(0, 3.5, 0))
-    end
-    hrp.AssemblyLinearVelocity = Vector3.zero
+    if hum then hum.PlatformStand = on end
 end
 
 -- ------------------------------------------------------------
--- Проверка успешного сбора
+-- Проверка сбора: выходим сразу, как только Parent == nil
 -- ------------------------------------------------------------
 local function waitCollected(item, timeout)
     local deadline = tick() + (timeout or 2)
@@ -828,6 +799,19 @@ local function waitCollected(item, timeout)
         task.wait(0.05)
     end
     return false
+end
+
+-- ------------------------------------------------------------
+-- Микродвижения
+-- ------------------------------------------------------------
+local microOffset = 0
+local function applyMicroJitter(hrp, baseY)
+    microOffset = microOffset + 0.15
+    local dy = math.sin(microOffset) * 0.3
+    if hrp and hrp.Parent then
+        hrp.CFrame = CFrame.new(hrp.Position.X, baseY + dy, hrp.Position.Z)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
 end
 
 -- ------------------------------------------------------------
@@ -842,54 +826,34 @@ end
 
 -- ------------------------------------------------------------
 -- UNDERGROUND TELEPORT
--- Голова на уровне конфеты, висим под конфетой, не падаем
 -- ------------------------------------------------------------
 local function doTeleportUnderground(targetPos)
     local hrp = getHRP()
-    local hum = getHumanoid()
-    if not hrp or not hum then return end
-
-    local HEAD_OFFSET = 1.5
-    local desiredHRP_Y = targetPos.Y - HEAD_OFFSET
-
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {LocalPlayer.Character}
-    local ray = Workspace:Raycast(
-        Vector3.new(targetPos.X, desiredHRP_Y, targetPos.Z),
-        Vector3.new(0, HEAD_OFFSET + 1.5, 0),
-        params
-    )
-    if ray then
-        desiredHRP_Y = ray.Position.Y - HEAD_OFFSET - 0.5
-    end
-
-    local fixedCF = CFrame.new(targetPos.X, desiredHRP_Y, targetPos.Z)
+    if not hrp then return end
+    local fixedCF = CFrame.new(targetPos.X, targetPos.Y - 4.5, targetPos.Z)
     hrp.CFrame = fixedCF
     hrp.AssemblyLinearVelocity = Vector3.zero
-    hum.PlatformStand = true
-
+    local holdUntil = tick() + 0.5
     local holdThread = task.spawn(function()
-        local deadline = tick() + 2
-        while tick() < deadline and State.AutoFarm and not State._closed do
+        while tick() < holdUntil and State.AutoFarm and not State._closed do
             local h = getHRP()
-            if not h then break end
-            h.CFrame = fixedCF
-            h.AssemblyLinearVelocity = Vector3.zero
-            task.wait(0.03)
+            if h then
+                h.CFrame = fixedCF
+                h.AssemblyLinearVelocity = Vector3.zero
+            end
+            task.wait(0.05)
         end
     end)
     return holdThread
 end
 
 -- ------------------------------------------------------------
--- FLY: BodyVelocity + BodyGyro — плавное движение, сервер не откатывает
--- Возвращает true при прибытии.
+-- FLY шаг
 -- ------------------------------------------------------------
-local function doFlyStep(targetPos, lying, fixedY, bv, bg)
+local function doFlyStep(targetPos, lying, fixedY)
     local hrp = getHRP()
     local hum = getHumanoid()
-    if not hrp or not hum or not bv or not bg then return false end
+    if not hrp or not hum then return false end
 
     local current = hrp.Position
     local dir = Vector3.new(targetPos.X - current.X, 0, targetPos.Z - current.Z)
@@ -898,15 +862,17 @@ local function doFlyStep(targetPos, lying, fixedY, bv, bg)
     end
 
     local speed = State.FarmSpeed
-    bv.Velocity = dir.Unit * speed
+    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
+    local newX = current.X + step.X
+    local newZ = current.Z + step.Z
 
     local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local cf = CFrame.new(current, lookAt)
+    local newCF = CFrame.new(Vector3.new(newX, fixedY, newZ), lookAt)
     if lying then
-        cf = cf * CFrame.Angles(0, 0, math.rad(90))
+        newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
     end
-    bg.CFrame = cf
-
+    hrp.CFrame = newCF
+    hrp.AssemblyLinearVelocity = Vector3.zero
     return false
 end
 
@@ -924,11 +890,15 @@ function startAutoFarm()
             local hum = getHumanoid()
 
             if not hrp or not hum or hum.Health <= 0 then
+                freezeForFly(false)
+                setNoCollide(false)
                 task.wait(0.5)
             else
                 local items = findItems()
 
+                -- КОНФЕТ НЕТ — просто стоим, ничего не делаем
                 if #items == 0 then
+                    freezeForFly(false)
                     task.wait(0.4)
                 else
                     local target = pickTarget(items, hrp.Position)
@@ -957,7 +927,7 @@ function startAutoFarm()
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
-                        -- FLY (Lying / Standing) — BodyVelocity + BodyGyro
+                        -- FLY (Lying / Standing)
                         -------------------------------------------------
                         else
                             local lying = (mode == "Fly Lying")
@@ -968,38 +938,24 @@ function startAutoFarm()
                                 fixedY = hrp.Position.Y
                             end
 
-                            hum.PlatformStand = true
-                            startNoclip()
+                            freezeForFly(true)
+                            setNoCollide(true)
 
-                            local bv = Instance.new("BodyVelocity")
-                            bv.Name = "MM2_Farm_BV"
-                            bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-                            bv.Velocity = Vector3.zero
-                            bv.Parent = hrp
-
-                            local bg = Instance.new("BodyGyro")
-                            bg.Name = "MM2_Farm_BG"
-                            bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-                            bg.P = 3000
-                            bg.D = 300
-                            bg.CFrame = hrp.CFrame
-                            bg.Parent = hrp
-
-                            local deadline = tick() + 8
+                            local deadline = tick() + 5
                             while State.AutoFarm and not State._closed and target.Parent do
                                 if tick() > deadline then break end
-                                if doFlyStep(target.Position, lying, fixedY, bv, bg) then
+                                if doFlyStep(target.Position, lying, fixedY) then
                                     break
                                 end
+                                applyMicroJitter(hrp, fixedY)
                                 task.wait()
                             end
 
-                            pcall(function() bv:Destroy() end)
-                            pcall(function() bg:Destroy() end)
-                            stopNoclip()
-                            landOnGround()
+                            setNoCollide(false)
+                            freezeForFly(false)
 
-                            local ok = waitCollected(target, 1.0)
+                            -- Ждём сбор максимум 0.4 сек, но выходим сразу как только Parent == nil
+                            local ok = waitCollected(target, 0.4)
                             if ok then
                                 farmCollected[target] = true
                             else
@@ -1008,33 +964,27 @@ function startAutoFarm()
                                     farmCollected[target] = true
                                 end
                             end
-
-                            task.wait(0.3)
+                            -- Без финального ожидания — сразу к следующей
                         end
                     end
                 end
             end
         end
+
+        freezeForFly(false)
+        setNoCollide(false)
     end)
 end
 
 function stopAutoFarm()
     if State._farmThread then
-        pcall(function() task.cancel(State._farmThread) end)
+        task.cancel(State._farmThread)
         State._farmThread = nil
-    end
-    stopNoclip()
-    -- Убираем возможные остатки BodyVelocity / BodyGyro
-    local hrp = getHRP()
-    if hrp then
-        local bv = hrp:FindFirstChild("MM2_Farm_BV")
-        if bv then pcall(function() bv:Destroy() end) end
-        local bg = hrp:FindFirstChild("MM2_Farm_BG")
-        if bg then pcall(function() bg:Destroy() end) end
     end
     farmCollected = {}
     farmAttempts = {}
-    landOnGround()
+    freezeForFly(false)
+    setNoCollide(false)
 end
 
 -- ============================================================
