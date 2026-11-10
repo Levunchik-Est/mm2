@@ -720,10 +720,9 @@ end
 local farmCollected = {}          -- [Instance] = true  — уже собрано
 local farmAttempts  = {}          -- [Instance] = number — сколько попыток
 local MAX_ATTEMPTS  = 3           -- попыток на одну конфету
-local FARM_TP_INTERVAL = 2        -- строго 2 секунды
+local FARM_TP_INTERVAL = 2        -- строго 2 секунды (только для телепортов)
 local FARM_SPEED_DEFAULT = 25
 
--- Инициализация значений в State (если их ещё нет)
 if State.FarmSpeed == nil or State.FarmSpeed == 35 then
     State.FarmSpeed = FARM_SPEED_DEFAULT
 end
@@ -770,7 +769,7 @@ local function pickTarget(items, fromPos)
 end
 
 -- ------------------------------------------------------------
--- Безопасное включение/выключение физики
+-- Физика
 -- ------------------------------------------------------------
 local function setNoCollide(on)
     local char = LocalPlayer.Character
@@ -796,7 +795,7 @@ local function waitCollected(item, timeout)
         if not item or not item.Parent then
             return true
         end
-        task.wait(0.05)
+        task.wait(0.02)
     end
     return false
 end
@@ -896,19 +895,18 @@ function startAutoFarm()
             else
                 local items = findItems()
 
-                -- КОНФЕТ НЕТ — просто стоим, ничего не делаем
                 if #items == 0 then
                     freezeForFly(false)
                     task.wait(0.4)
                 else
                     local target = pickTarget(items, hrp.Position)
                     if not target then
-                        task.wait(0.3)
+                        task.wait(0.2)
                     else
                         local mode = State.FarmMode
 
                         -------------------------------------------------
-                        -- TELEPORT
+                        -- TELEPORT — кулдаун 2 сек
                         -------------------------------------------------
                         if mode == "Teleport" then
                             doTeleportNormal(target.Position)
@@ -917,7 +915,7 @@ function startAutoFarm()
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
-                        -- UNDERGROUND TELEPORT
+                        -- UNDERGROUND TELEPORT — кулдаун 2 сек
                         -------------------------------------------------
                         elseif mode == "Underground Teleport" then
                             local hold = doTeleportUnderground(target.Position)
@@ -927,7 +925,7 @@ function startAutoFarm()
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
-                        -- FLY (Lying / Standing)
+                        -- FLY (Lying / Standing) — БЕЗ кулдауна
                         -------------------------------------------------
                         else
                             local lying = (mode == "Fly Lying")
@@ -954,8 +952,8 @@ function startAutoFarm()
                             setNoCollide(false)
                             freezeForFly(false)
 
-                            -- Ждём сбор максимум 0.4 сек, но выходим сразу как только Parent == nil
-                            local ok = waitCollected(target, 0.4)
+                            -- Минимальная проверка сбора: 0.15 сек, выходим сразу при Parent == nil
+                            local ok = waitCollected(target, 0.15)
                             if ok then
                                 farmCollected[target] = true
                             else
@@ -964,7 +962,7 @@ function startAutoFarm()
                                     farmCollected[target] = true
                                 end
                             end
-                            -- Без финального ожидания — сразу к следующей
+                            -- Никаких task.wait после — сразу к следующей конфете
                         end
                     end
                 end
