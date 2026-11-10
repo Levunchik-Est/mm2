@@ -693,6 +693,28 @@ trackConn(Players.PlayerRemoving:Connect(function() task.wait(0.5); refreshPlaye
 task.spawn(function() task.wait(1); refreshPlayerDropdowns() end)
 
 -- ============================================================
+-- ANTI-AFK (имитация клика через VirtualUser + Idled)
+-- ============================================================
+function startAntiAFK()
+    stopAntiAFK()
+    State._antiAFKConn = LocalPlayer.Idled:Connect(function()
+        if not State.AntiAFK or State._closed then return end
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    end)
+    table.insert(State._connections, State._antiAFKConn)
+end
+
+function stopAntiAFK()
+    if State._antiAFKConn then
+        pcall(function() State._antiAFKConn:Disconnect() end)
+        State._antiAFKConn = nil
+    end
+end
+
+-- ============================================================
 -- AUTO FARM (переписан с нуля по ТЗ)
 -- ============================================================
 local farmCollected = {}          -- [Instance] = true  — уже собрано
