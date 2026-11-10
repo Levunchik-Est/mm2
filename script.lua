@@ -722,7 +722,6 @@ local farmAttempts  = {}          -- [Instance] = number — сколько по
 local MAX_ATTEMPTS  = 3           -- попыток на одну конфету
 local FARM_TP_INTERVAL = 2        -- строго 2 секунды
 local FARM_SPEED_DEFAULT = 35     -- синхронизировано со слайдером (10–60, дефолт 35)
-local NO_PHYSICS = 11             -- Enum.HumanoidStateType.StrafingNoPhysics
 
 -- Инициализация значений в State (если их ещё нет)
 State.FarmSpeed = State.FarmSpeed or FARM_SPEED_DEFAULT
@@ -769,36 +768,26 @@ local function pickTarget(items, fromPos)
 end
 
 -- ------------------------------------------------------------
--- NO-PHYSICS: держим Humanoid в состоянии StrafingNoPhysics
--- Это отключает коллизии на уровне движка, а не CanCollide
+-- Noclip: держим CanCollide=false на всех частях персонажа
 -- ------------------------------------------------------------
-local _noPhysicsThread = nil
-local function startNoPhysics()
-    if _noPhysicsThread then return end
-    _noPhysicsThread = task.spawn(function()
-        while State.AutoFarm and not State._closed do
-            local hum = getHumanoid()
-            if hum then
-                pcall(function()
-                    hum:ChangeState(NO_PHYSICS)
-                end)
+local _noclipConn = nil
+local function startNoclip()
+    if _noclipConn then return end
+    _noclipConn = RunService.Stepped:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if part.CanCollide then part.CanCollide = false end
             end
-            task.wait(0.05) -- держим состояние, не спамим каждый кадр
         end
-        _noPhysicsThread = nil
     end)
 end
 
-local function stopNoPhysics()
-    if _noPhysicsThread then
-        pcall(function() task.cancel(_noPhysicsThread) end)
-        _noPhysicsThread = nil
-    end
-    local hum = getHumanoid()
-    if hum then
-        pcall(function()
-            hum:ChangeState(Enum.HumanoidStateType.Running)
-        end)
+local function stopNoclip()
+    if _noclipConn then
+        pcall(function() _noclipConn:Disconnect() end)
+        _noclipConn = nil
     end
 end
 
@@ -894,13 +883,13 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY: движение CFrame в состоянии NoPhysics (сквозь стены)
+-- FLY: BodyVelocity + BodyGyro — плавное движение, сервер не откатывает
 -- Возвращает true при прибытии.
 -- ------------------------------------------------------------
-local function doFlyStep(targetPos, lying, fixedY)
+local function doFlyStep(targetPos, lying, fixedY, bv, bg)
     local hrp = getHRP()
     local hum = getHumanoid()
-    if not hrp or not hum then return false end
+    if not hrp or not hum or not bv or not bg then return false end
 
     local current = hrp.Position
     local dir = Vector3.new(targetPos.X - current.X, 0, targetPos.Z - current.Z)
@@ -909,19 +898,15 @@ local function doFlyStep(targetPos, lying, fixedY)
     end
 
     local speed = State.FarmSpeed
-    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
-    local newX = current.X + step.X
-    local newZ = current.Z + step.Z
+    bv.Velocity = dir.Unit * speed
 
     local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local newCF = CFrame.new(Vector3.new(newX, fixedY, newZ), lookAt)
+    local cf = CFrame.new(current, lookAt)
     if lying then
-        newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
+        cf = cf * CFrame.Angles(0, 0, math.rad(90))
     end
-    hrp.CFrame = newCF
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    -- Держим NoPhysics каждый шаг (сервер может сбросить состояние)
-    pcall(function() hum:ChangeState(NO_PHYSICS) end)
+    bg.CFrame = cf
+
     return false
 end
 
@@ -932,7 +917,6 @@ function startAutoFarm()
     stopAutoFarm()
     farmCollected = {}
     farmAttempts = {}
-    startNoPhysics() -- включаем StrafingNoPhysics на весь фарм
 
     State._farmThread = task.spawn(function()
         while State.AutoFarm and not State._closed do
@@ -973,7 +957,7 @@ function startAutoFarm()
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
-                        -- FLY (Lying / Standing) — NoPhysics + CFrame
+                        -- FLY (Lying / Standing) — BodyVelocity + BodyGyro
                         -------------------------------------------------
                         else
                             local lying = (mode == "Fly Lying")
@@ -984,14 +968,36 @@ function startAutoFarm()
                                 fixedY = hrp.Position.Y
                             end
 
+                            hum.PlatformStand = true
+                            startNoclip()
+
+                            local bv = Instance.new("BodyVelocity")
+                            bv.Name = "MM2_Farm_BV"
+                            bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+                            bv.Velocity = Vector3.zero
+                            bv.Parent = hrp
+
+                            local bg = Instance.new("BodyGyro")
+                            bg.Name = "MM2_Farm_BG"
+                            bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+                            bg.P = 3000
+                            bg.D = 300
+                            bg.CFrame = hrp.CFrame
+                            bg.Parent = hrp
+
                             local deadline = tick() + 8
                             while State.AutoFarm and not State._closed and target.Parent do
                                 if tick() > deadline then break end
-                                if doFlyStep(target.Position, lying, fixedY) then
+                                if doFlyStep(target.Position, lying, fixedY, bv, bg) then
                                     break
                                 end
                                 task.wait()
                             end
+
+                            pcall(function() bv:Destroy() end)
+                            pcall(function() bg:Destroy() end)
+                            stopNoclip()
+                            landOnGround()
 
                             local ok = waitCollected(target, 1.0)
                             if ok then
@@ -1017,11 +1023,20 @@ function stopAutoFarm()
         pcall(function() task.cancel(State._farmThread) end)
         State._farmThread = nil
     end
-    stopNoPhysics()
+    stopNoclip()
+    -- Убираем возможные остатки BodyVelocity / BodyGyro
+    local hrp = getHRP()
+    if hrp then
+        local bv = hrp:FindFirstChild("MM2_Farm_BV")
+        if bv then pcall(function() bv:Destroy() end) end
+        local bg = hrp:FindFirstChild("MM2_Farm_BG")
+        if bg then pcall(function() bg:Destroy() end) end
+    end
     farmCollected = {}
     farmAttempts = {}
     landOnGround()
 end
+
 -- ============================================================
 -- ESP ROLES (подсветка тела сквозь стены)
 -- ============================================================
