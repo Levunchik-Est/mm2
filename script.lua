@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly: влетаем телом в конфету и летим дальше)
+-- AUTO FARM (Fly: без единой остановки)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -730,7 +730,7 @@ State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
 
 -- ------------------------------------------------------------
--- NoClip (постоянное отключение коллизий каждый физический кадр)
+-- NoClip
 -- ------------------------------------------------------------
 local noclipConn = nil
 
@@ -923,29 +923,86 @@ function startAutoFarm()
     farmAttempts = {}
 
     State._farmThread = task.spawn(function()
+        local currentTarget = nil   -- ← держим текущую цель между итерациями
+
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
             local hum = getHumanoid()
 
             if not hrp or not hum or hum.Health <= 0 then
                 stopFlyPhysics()
+                currentTarget = nil
                 task.wait(0.5)
             else
-                local items = findItems()
+                local mode = State.FarmMode
 
-                if #items == 0 then
+                -- ============ FLY ============
+                if mode == "Fly Lying" or mode == "Fly Standing" then
+                    local lying = (mode == "Fly Lying")
+
+                    if not flyBV then
+                        startFlyPhysics()
+                    end
+
+                    -- Если текущей цели нет или она исчезла — ищем новую
+                    if not currentTarget or not currentTarget.Parent then
+                        if currentTarget then
+                            farmCollected[currentTarget] = true
+                            currentTarget = nil
+                        end
+                        local items = findItems()
+                        if #items == 0 then
+                            flyBV.Velocity = Vector3.zero
+                            task.wait(0.4)
+                        else
+                            currentTarget = pickTarget(items, hrp.Position)
+                            if not currentTarget then
+                                flyBV.Velocity = Vector3.zero
+                                task.wait(0.2)
+                            end
+                        end
+                    end
+
+                    -- Летим к текущей цели, БЕЗ остановок
+                    if currentTarget then
+                        if not currentTarget.Parent then
+                            farmCollected[currentTarget] = true
+                            currentTarget = nil
+                        else
+                            local toTarget = currentTarget.Position - hrp.Position
+                            local dist = toTarget.Magnitude
+
+                            setFlyVelocityTo(currentTarget.Position, lying)
+
+                            -- Проверяем пролёт насквозь по смене направления
+                            if currentTarget:GetAttribute("__lastDist") then
+                                -- nope, не используем атрибут
+                            end
+
+                            -- Если очень близко — цель считается достигнутой,
+                            -- сразу летим к следующей в СЛЕДУЮЩЕЙ итерации,
+                            -- но НЕ тормозим
+                            if dist < 1.5 then
+                                farmCollected[currentTarget] = true
+                                currentTarget = nil
+                            end
+                        end
+                    end
+
+                    task.wait()
+
+                -- ============ TELEPORT ============
+                elseif mode == "Teleport" then
                     stopFlyPhysics()
-                    task.wait(0.4)
-                else
-                    local target = pickTarget(items, hrp.Position)
-                    if not target then
-                        task.wait(0.2)
+                    currentTarget = nil
+                    local items = findItems()
+                    if #items == 0 then
+                        task.wait(0.4)
                     else
-                        local mode = State.FarmMode
-
-                        -- TELEPORT
-                        if mode == "Teleport" then
-                            stopFlyPhysics()
+                        local target = pickTarget(items, hrp.Position)
+                        if not target then
+                            task.wait(0.2)
+                        else
                             doTeleportNormal(target.Position)
                             local ok = waitCollected(target, 1.0)
                             if ok then farmCollected[target] = true
@@ -954,10 +1011,21 @@ function startAutoFarm()
                                 if farmAttempts[target] >= MAX_ATTEMPTS then farmCollected[target] = true end
                             end
                             task.wait(FARM_TP_INTERVAL)
+                        end
+                    end
 
-                        -- UNDERGROUND TELEPORT
-                        elseif mode == "Underground Teleport" then
-                            stopFlyPhysics()
+                -- ============ UNDERGROUND TELEPORT ============
+                elseif mode == "Underground Teleport" then
+                    stopFlyPhysics()
+                    currentTarget = nil
+                    local items = findItems()
+                    if #items == 0 then
+                        task.wait(0.4)
+                    else
+                        local target = pickTarget(items, hrp.Position)
+                        if not target then
+                            task.wait(0.2)
+                        else
                             local hold = doTeleportUnderground(target.Position)
                             local ok = waitCollected(target, 1.0)
                             if hold then pcall(function() task.cancel(hold) end) end
@@ -967,71 +1035,11 @@ function startAutoFarm()
                                 if farmAttempts[target] >= MAX_ATTEMPTS then farmCollected[target] = true end
                             end
                             task.wait(FARM_TP_INTERVAL)
-
-                        -- FLY (Lying / Standing) — ВЛЕТАЕМ ТЕЛОМ И ЛЕТИМ ДАЛЬШЕ
-                        else
-                            local lying = (mode == "Fly Lying")
-
-                            if not flyBV then
-                                startFlyPhysics()
-                            end
-
-                            local flyStart = tick()
-                            local maxFlyTime = 6
-                            local lastDir = nil
-                            local flewThrough = false
-
-                            while State.AutoFarm and not State._closed and target.Parent do
-                                if tick() - flyStart > maxFlyTime then break end
-
-                                hrp = getHRP()
-                                if not hrp then break end
-
-                                local toTarget = target.Position - hrp.Position
-                                local dist = toTarget.Magnitude
-
-                                -- Проверяем, пролетели ли мы конфету насквозь:
-                                -- если направление к цели сменилось на противоположное — мы за ней
-                                if lastDir and dist > 0.5 then
-                                    local dot = lastDir:Dot(toTarget.Unit)
-                                    if dot < 0 then
-                                        flewThrough = true
-                                        break
-                                    end
-                                end
-                                lastDir = toTarget.Unit
-
-                                -- Летим прямо в конфету, БЕЗ торможения
-                                setFlyVelocityTo(target.Position, lying)
-
-                                -- Если конфета исчезла — собрана
-                                if not target.Parent then break end
-
-                                -- Если очень близко — добавляем 1 кадр, чтобы тело точно пересекло хитбокс
-                                if dist < 3 then
-                                    task.wait()
-                                end
-
-                                task.wait()
-                            end
-
-                            -- Проверка сбора
-                            if not target.Parent then
-                                farmCollected[target] = true
-                            else
-                                local ok = waitCollected(target, 0.1)
-                                if ok then
-                                    farmCollected[target] = true
-                                else
-                                    farmAttempts[target] = (farmAttempts[target] or 0) + 1
-                                    if farmAttempts[target] >= MAX_ATTEMPTS then
-                                        farmCollected[target] = true
-                                    end
-                                end
-                            end
-                            -- Без паузы — сразу к следующей
                         end
                     end
+
+                else
+                    task.wait(0.2)
                 end
             end
         end
