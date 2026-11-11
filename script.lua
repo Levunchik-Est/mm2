@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на BodyVelocity + NoClip через Stepped)
+-- AUTO FARM (Fly на BodyVelocity + NoClip, без остановок)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -971,7 +971,7 @@ function startAutoFarm()
                             end
                             task.wait(FARM_TP_INTERVAL)
 
-                        -- FLY (Lying / Standing)
+                        -- FLY (Lying / Standing) — БЕЗ ОСТАНОВОК
                         else
                             local lying = (mode == "Fly Lying")
 
@@ -979,6 +979,7 @@ function startAutoFarm()
                                 startFlyPhysics()
                             end
 
+                            -- Летим, пока не долетели или цель не исчезла
                             local flyStart = tick()
                             local maxFlyTime = 8
                             while State.AutoFarm and not State._closed and target.Parent do
@@ -987,20 +988,21 @@ function startAutoFarm()
                                 hrp = getHRP()
                                 if not hrp then break end
 
-                                setFlyVelocityTo(target.Position, lying)
-
                                 local dist = (target.Position - hrp.Position).Magnitude
                                 if dist < 3 then
+                                    -- Долетели: ставим velocity=0 и даём 2 кадра на регистрацию Touch
                                     flyBV.Velocity = Vector3.zero
-                                    task.wait(0.04)
-                                    task.wait(0.04)
+                                    task.wait(0.02)
+                                    task.wait(0.02)
                                     break
                                 end
 
+                                setFlyVelocityTo(target.Position, lying)
                                 task.wait()
                             end
 
-                            local ok = waitCollected(target, 0.3)
+                            -- Проверка сбора: минимум 0.1 сек, выходим сразу при Parent == nil
+                            local ok = waitCollected(target, 0.1)
                             if ok then
                                 farmCollected[target] = true
                             else
@@ -1009,6 +1011,7 @@ function startAutoFarm()
                                     farmCollected[target] = true
                                 end
                             end
+                            -- Без паузы — сразу к следующей цели
                         end
                     end
                 end
