@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на BodyVelocity + NoClip, без остановок)
+-- AUTO FARM (Fly: влетаем в конфету и сразу летим дальше)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -730,7 +730,7 @@ State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
 
 -- ------------------------------------------------------------
--- NoClip (постоянное отключение коллизий каждый физический кадр)
+-- NoClip
 -- ------------------------------------------------------------
 local noclipConn = nil
 
@@ -813,9 +813,6 @@ local function freezeForFly(on)
     if hum then hum.PlatformStand = on end
 end
 
--- ------------------------------------------------------------
--- Проверка сбора
--- ------------------------------------------------------------
 local function waitCollected(item, timeout)
     local deadline = tick() + (timeout or 2)
     while tick() < deadline do
@@ -900,7 +897,7 @@ local function setFlyVelocityTo(targetPos, lying)
     if not hrp then return end
 
     local dir = (targetPos - hrp.Position)
-    if dir.Magnitude < 1 then
+    if dir.Magnitude < 0.5 then
         flyBV.Velocity = Vector3.zero
         return
     end
@@ -971,7 +968,7 @@ function startAutoFarm()
                             end
                             task.wait(FARM_TP_INTERVAL)
 
-                        -- FLY (Lying / Standing) — БЕЗ ОСТАНОВОК
+                        -- FLY (Lying / Standing) — ВЛЕТАЕМ И ЛЕТИМ ДАЛЬШЕ
                         else
                             local lying = (mode == "Fly Lying")
 
@@ -979,39 +976,57 @@ function startAutoFarm()
                                 startFlyPhysics()
                             end
 
-                            -- Летим, пока не долетели или цель не исчезла
+                            -- Летим к цели, проверяя сбор НА ЛЕТУ
                             local flyStart = tick()
                             local maxFlyTime = 8
+                            local flewPast = false
                             while State.AutoFarm and not State._closed and target.Parent do
                                 if tick() - flyStart > maxFlyTime then break end
 
                                 hrp = getHRP()
                                 if not hrp then break end
 
-                                local dist = (target.Position - hrp.Position).Magnitude
-                                if dist < 3 then
-                                    -- Долетели: ставим velocity=0 и даём 2 кадра на регистрацию Touch
-                                    flyBV.Velocity = Vector3.zero
-                                    task.wait(0.02)
-                                    task.wait(0.02)
+                                local toTarget = target.Position - hrp.Position
+                                local dist = toTarget.Magnitude
+
+                                -- Если пролетели мимо (оказались позади) — выходим
+                                if dist > 1 and flewPast then
+                                    -- проверяем, не пролетели ли мы точку: скалярное произведение
+                                    -- направления скорости на вектор к цели < 0 => пролетели
+                                end
+
+                                -- Ставим скорость к цели
+                                setFlyVelocityTo(target.Position, lying)
+
+                                -- Каждый кадр проверяем, не собралась ли конфета
+                                if not target.Parent then break end
+
+                                -- Если очень близко — просто пролетаем, не тормозим
+                                if dist < 2 then
+                                    -- Продолжаем лететь вперёд, но целимся уже в следующую
+                                    flewPast = true
                                     break
                                 end
 
-                                setFlyVelocityTo(target.Position, lying)
                                 task.wait()
                             end
 
-                            -- Проверка сбора: минимум 0.1 сек, выходим сразу при Parent == nil
-                            local ok = waitCollected(target, 0.1)
-                            if ok then
+                            -- Проверка: если не собралось за 0.05 сек — считаем попытку
+                            if not target.Parent then
                                 farmCollected[target] = true
                             else
-                                farmAttempts[target] = (farmAttempts[target] or 0) + 1
-                                if farmAttempts[target] >= MAX_ATTEMPTS then
+                                -- Даём ещё 0.1 сек на регистрацию, но НЕ тормозим
+                                local ok = waitCollected(target, 0.1)
+                                if ok then
                                     farmCollected[target] = true
+                                else
+                                    farmAttempts[target] = (farmAttempts[target] or 0) + 1
+                                    if farmAttempts[target] >= MAX_ATTEMPTS then
+                                        farmCollected[target] = true
+                                    end
                                 end
                             end
-                            -- Без паузы — сразу к следующей цели
+                            -- Без паузы — сразу к следующей
                         end
                     end
                 end
@@ -1031,7 +1046,6 @@ function stopAutoFarm()
     farmAttempts = {}
     stopFlyPhysics()
 end
-
 -- ============================================================
 -- ESP ROLES (подсветка тела сквозь стены)
 -- ============================================================
