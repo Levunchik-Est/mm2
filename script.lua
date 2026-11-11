@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (улучшенный: надёжный сбор)
+-- AUTO FARM (Fly на BodyVelocity — без левитации)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -730,7 +730,7 @@ State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
 
 -- ------------------------------------------------------------
--- Проверка, что объект вообще может регистрировать Touch
+-- Проверка сбора
 -- ------------------------------------------------------------
 local function canCollect(item)
     if not item or not item.Parent then return false end
@@ -794,7 +794,7 @@ local function freezeForFly(on)
 end
 
 -- ------------------------------------------------------------
--- Проверка сбора: выходим сразу, как только Parent == nil
+-- Проверка сбора
 -- ------------------------------------------------------------
 local function waitCollected(item, timeout)
     local deadline = tick() + (timeout or 2)
@@ -808,26 +808,11 @@ local function waitCollected(item, timeout)
 end
 
 -- ------------------------------------------------------------
--- Микродвижения
--- ------------------------------------------------------------
-local microOffset = 0
-local function applyMicroJitter(hrp, baseY)
-    microOffset = microOffset + 0.15
-    local dy = math.sin(microOffset) * 0.3
-    if hrp and hrp.Parent then
-        hrp.CFrame = CFrame.new(hrp.Position.X, baseY + dy, hrp.Position.Z)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-    end
-end
-
--- ------------------------------------------------------------
--- TELEPORT (обычный) — с несколькими "кадрами" на точке
+-- TELEPORT (без изменений)
 -- ------------------------------------------------------------
 local function doTeleportNormal(targetPos)
     local hrp = getHRP()
-    local hum = getHumanoid()
-    if not hrp or not hum then return end
-    -- Ставим точно в конфету и держим 4 кадра для регистрации Touch
+    if not hrp then return end
     local fixedCF = CFrame.new(targetPos.X, targetPos.Y + 2.5, targetPos.Z)
     for i = 1, 4 do
         hrp.CFrame = fixedCF
@@ -836,13 +821,9 @@ local function doTeleportNormal(targetPos)
     end
 end
 
--- ------------------------------------------------------------
--- UNDERGROUND TELEPORT — держим под конфетой дольше
--- ------------------------------------------------------------
 local function doTeleportUnderground(targetPos)
     local hrp = getHRP()
     if not hrp then return end
-    -- Ставим так, чтобы голова касалась конфеты
     local fixedCF = CFrame.new(targetPos.X, targetPos.Y - 4.5, targetPos.Z)
     local holdUntil = tick() + 0.8
     local holdThread = task.spawn(function()
@@ -859,43 +840,65 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY шаг: подлёт + фиксация на точке для Touch
+-- FLY на BodyVelocity (плавно, без левитации)
 -- ------------------------------------------------------------
-local function doFlyStep(targetPos, lying, fixedY)
+local flyBV = nil
+local flyBG = nil
+
+local function startFlyPhysics()
     local hrp = getHRP()
     local hum = getHumanoid()
-    if not hrp or not hum then return false end
+    if not hrp or not hum then return end
 
-    local current = hrp.Position
-    local dir = Vector3.new(targetPos.X - current.X, 0, targetPos.Z - current.Z)
+    hum.PlatformStand = true
+    setNoCollide(true)
 
-    -- Достигли: держим позицию 3 кадра для регистрации Touch
-    if dir.Magnitude < 3 then
-        local fixedCF = CFrame.new(targetPos.X, fixedY, targetPos.Z)
-        if lying then
-            fixedCF = fixedCF * CFrame.Angles(0, 0, math.rad(90))
-        end
-        for i = 1, 3 do
-            hrp.CFrame = fixedCF
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            task.wait(0.04)
-        end
-        return true
+    -- BodyVelocity — двигает персонажа без перезаписи CFrame
+    flyBV = Instance.new("BodyVelocity")
+    flyBV.Name = "MM2_FlyBV"
+    flyBV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    flyBV.Velocity = Vector3.zero
+    flyBV.Parent = hrp
+
+    -- BodyGyro — чтобы персонаж не кувыркался
+    flyBG = Instance.new("BodyGyro")
+    flyBG.Name = "MM2_FlyBG"
+    flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    flyBG.CFrame = hrp.CFrame
+    flyBG.Parent = hrp
+end
+
+local function stopFlyPhysics()
+    if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
+    if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = false end
+    setNoCollide(false)
+end
+
+-- Установить скорость полёта к цели (вызывается каждый кадр)
+local function setFlyVelocityTo(targetPos, lying)
+    if not flyBV then return end
+    local hrp = getHRP()
+    if not hrp then return end
+
+    local dir = (targetPos - hrp.Position)
+    if dir.Magnitude < 1 then
+        flyBV.Velocity = Vector3.zero
+        return
     end
 
     local speed = State.FarmSpeed
-    local step = dir.Unit * speed * (RunService.Heartbeat:Wait() or 0.016)
-    local newX = current.X + step.X
-    local newZ = current.Z + step.Z
+    flyBV.Velocity = dir.Unit * speed
 
-    local lookAt = Vector3.new(targetPos.X, fixedY, targetPos.Z)
-    local newCF = CFrame.new(Vector3.new(newX, fixedY, newZ), lookAt)
-    if lying then
-        newCF = newCF * CFrame.Angles(0, 0, math.rad(90))
+    -- Ориентация: смотрим на цель (или лежим)
+    if flyBG then
+        local lookAt = CFrame.new(hrp.Position, targetPos)
+        if lying then
+            lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
+        end
+        flyBG.CFrame = lookAt
     end
-    hrp.CFrame = newCF
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    return false
 end
 
 -- ------------------------------------------------------------
@@ -912,14 +915,13 @@ function startAutoFarm()
             local hum = getHumanoid()
 
             if not hrp or not hum or hum.Health <= 0 then
-                freezeForFly(false)
-                setNoCollide(false)
+                stopFlyPhysics()
                 task.wait(0.5)
             else
                 local items = findItems()
 
                 if #items == 0 then
-                    freezeForFly(false)
+                    stopFlyPhysics()
                     task.wait(0.4)
                 else
                     local target = pickTarget(items, hrp.Position)
@@ -928,102 +930,83 @@ function startAutoFarm()
                     else
                         local mode = State.FarmMode
 
-                        -------------------------------------------------
-                        -- TELEPORT — кулдаун 2 сек
-                        -------------------------------------------------
+                        -- TELEPORT
                         if mode == "Teleport" then
+                            stopFlyPhysics()
                             doTeleportNormal(target.Position)
                             local ok = waitCollected(target, 1.0)
-                            if ok then
-                                farmCollected[target] = true
+                            if ok then farmCollected[target] = true
                             else
                                 farmAttempts[target] = (farmAttempts[target] or 0) + 1
-                                if farmAttempts[target] >= MAX_ATTEMPTS then
-                                    farmCollected[target] = true
-                                end
+                                if farmAttempts[target] >= MAX_ATTEMPTS then farmCollected[target] = true end
                             end
                             task.wait(FARM_TP_INTERVAL)
 
-                        -------------------------------------------------
-                        -- UNDERGROUND TELEPORT — кулдаун 2 сек
-                        -------------------------------------------------
+                        -- UNDERGROUND TELEPORT
                         elseif mode == "Underground Teleport" then
+                            stopFlyPhysics()
                             local hold = doTeleportUnderground(target.Position)
                             local ok = waitCollected(target, 1.0)
                             if hold then pcall(function() task.cancel(hold) end) end
-                            if ok then
-                                farmCollected[target] = true
+                            if ok then farmCollected[target] = true
                             else
                                 farmAttempts[target] = (farmAttempts[target] or 0) + 1
-                                if farmAttempts[target] >= MAX_ATTEMPTS then
-                                    farmCollected[target] = true
-                                end
+                                if farmAttempts[target] >= MAX_ATTEMPTS then farmCollected[target] = true end
                             end
                             task.wait(FARM_TP_INTERVAL)
 
-                        -------------------------------------------------
-                        -- FLY (Lying / Standing)
-                        -------------------------------------------------
+                        -- FLY (Lying / Standing) — БЕЗ остановки
                         else
                             local lying = (mode == "Fly Lying")
-                            local fixedY
-                            if hum.FloorMaterial ~= Enum.Material.Air then
-                                fixedY = hrp.Position.Y + 2
-                            else
-                                fixedY = hrp.Position.Y
+
+                            -- Запускаем физику полёта один раз
+                            if not flyBV then
+                                startFlyPhysics()
                             end
 
-                            freezeForFly(true)
-                            setNoCollide(true)
-
-                            local deadline = tick() + 5
+                            -- Летим к цели, пока она существует или не собрана
+                            local flyStart = tick()
+                            local maxFlyTime = 8  -- предохранитель
                             while State.AutoFarm and not State._closed and target.Parent do
-                                if tick() > deadline then break end
-                                if doFlyStep(target.Position, lying, fixedY) then
+                                if tick() - flyStart > maxFlyTime then break end
+
+                                hrp = getHRP()
+                                if not hrp then break end
+
+                                setFlyVelocityTo(target.Position, lying)
+
+                                -- Если дистанция маленькая — даём 2 кадра на Touch
+                                local dist = (target.Position - hrp.Position).Magnitude
+                                if dist < 3 then
+                                    flyBV.Velocity = Vector3.zero
+                                    task.wait(0.04)
+                                    task.wait(0.04)
                                     break
                                 end
-                                applyMicroJitter(hrp, fixedY)
+
                                 task.wait()
                             end
 
-                            setNoCollide(false)
-                            freezeForFly(false)
-
-                            -- Проверка сбора: до 0.3 сек, выходим сразу при Parent == nil
+                            -- Проверяем, собралось ли
                             local ok = waitCollected(target, 0.3)
                             if ok then
                                 farmCollected[target] = true
                             else
                                 farmAttempts[target] = (farmAttempts[target] or 0) + 1
-                                -- Если не собралось — пробуем ещё раз к этой же конфете
-                                if farmAttempts[target] < MAX_ATTEMPTS and target.Parent then
-                                    task.wait(0.1)
-                                    -- Повторный подлёт к той же конфете
-                                    local retryDeadline = tick() + 2
-                                    while State.AutoFarm and not State._closed and target.Parent do
-                                        if tick() > retryDeadline then break end
-                                        if doFlyStep(target.Position, lying, fixedY) then
-                                            break
-                                        end
-                                        task.wait()
-                                    end
-                                    local ok2 = waitCollected(target, 0.3)
-                                    if ok2 then
-                                        farmCollected[target] = true
-                                    end
-                                end
                                 if farmAttempts[target] >= MAX_ATTEMPTS then
                                     farmCollected[target] = true
                                 end
                             end
+
+                            -- НЕ останавливаем flyBV — сразу летим к следующей
+                            -- (следующая итерация цикла вызовет setFlyVelocityTo на новую цель)
                         end
                     end
                 end
             end
         end
 
-        freezeForFly(false)
-        setNoCollide(false)
+        stopFlyPhysics()
     end)
 end
 
@@ -1034,8 +1017,7 @@ function stopAutoFarm()
     end
     farmCollected = {}
     farmAttempts = {}
-    freezeForFly(false)
-    setNoCollide(false)
+    stopFlyPhysics()
 end
 
 -- ============================================================
