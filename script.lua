@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на BodyVelocity — без левитации)
+-- AUTO FARM (Fly на BodyVelocity + NoClip через Stepped)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -728,6 +728,39 @@ if State.FarmSpeed == nil or State.FarmSpeed == 35 then
 end
 State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
+
+-- ------------------------------------------------------------
+-- NoClip (постоянное отключение коллизий каждый физический кадр)
+-- ------------------------------------------------------------
+local noclipConn = nil
+
+local function startNoclip()
+    if noclipConn then return end
+    noclipConn = RunService.Stepped:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    end)
+end
+
+local function stopNoclip()
+    if noclipConn then
+        noclipConn:Disconnect()
+        noclipConn = nil
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                pcall(function() part.CanCollide = true end)
+            end
+        end
+    end
+end
 
 -- ------------------------------------------------------------
 -- Проверка сбора
@@ -775,19 +808,6 @@ local function pickTarget(items, fromPos)
     return best
 end
 
--- ------------------------------------------------------------
--- Физика
--- ------------------------------------------------------------
-local function setNoCollide(on)
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            pcall(function() part.CanCollide = not on end)
-        end
-    end
-end
-
 local function freezeForFly(on)
     local hum = getHumanoid()
     if hum then hum.PlatformStand = on end
@@ -808,7 +828,7 @@ local function waitCollected(item, timeout)
 end
 
 -- ------------------------------------------------------------
--- TELEPORT (без изменений)
+-- TELEPORT
 -- ------------------------------------------------------------
 local function doTeleportNormal(targetPos)
     local hrp = getHRP()
@@ -840,7 +860,7 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY на BodyVelocity (плавно, без левитации)
+-- FLY на BodyVelocity + NoClip
 -- ------------------------------------------------------------
 local flyBV = nil
 local flyBG = nil
@@ -851,16 +871,14 @@ local function startFlyPhysics()
     if not hrp or not hum then return end
 
     hum.PlatformStand = true
-    setNoCollide(true)
+    startNoclip()
 
-    -- BodyVelocity — двигает персонажа без перезаписи CFrame
     flyBV = Instance.new("BodyVelocity")
     flyBV.Name = "MM2_FlyBV"
     flyBV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
     flyBV.Velocity = Vector3.zero
     flyBV.Parent = hrp
 
-    -- BodyGyro — чтобы персонаж не кувыркался
     flyBG = Instance.new("BodyGyro")
     flyBG.Name = "MM2_FlyBG"
     flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
@@ -873,10 +891,9 @@ local function stopFlyPhysics()
     if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
     local hum = getHumanoid()
     if hum then hum.PlatformStand = false end
-    setNoCollide(false)
+    stopNoclip()
 end
 
--- Установить скорость полёта к цели (вызывается каждый кадр)
 local function setFlyVelocityTo(targetPos, lying)
     if not flyBV then return end
     local hrp = getHRP()
@@ -891,7 +908,6 @@ local function setFlyVelocityTo(targetPos, lying)
     local speed = State.FarmSpeed
     flyBV.Velocity = dir.Unit * speed
 
-    -- Ориентация: смотрим на цель (или лежим)
     if flyBG then
         local lookAt = CFrame.new(hrp.Position, targetPos)
         if lying then
@@ -955,18 +971,16 @@ function startAutoFarm()
                             end
                             task.wait(FARM_TP_INTERVAL)
 
-                        -- FLY (Lying / Standing) — БЕЗ остановки
+                        -- FLY (Lying / Standing)
                         else
                             local lying = (mode == "Fly Lying")
 
-                            -- Запускаем физику полёта один раз
                             if not flyBV then
                                 startFlyPhysics()
                             end
 
-                            -- Летим к цели, пока она существует или не собрана
                             local flyStart = tick()
-                            local maxFlyTime = 8  -- предохранитель
+                            local maxFlyTime = 8
                             while State.AutoFarm and not State._closed and target.Parent do
                                 if tick() - flyStart > maxFlyTime then break end
 
@@ -975,7 +989,6 @@ function startAutoFarm()
 
                                 setFlyVelocityTo(target.Position, lying)
 
-                                -- Если дистанция маленькая — даём 2 кадра на Touch
                                 local dist = (target.Position - hrp.Position).Magnitude
                                 if dist < 3 then
                                     flyBV.Velocity = Vector3.zero
@@ -987,7 +1000,6 @@ function startAutoFarm()
                                 task.wait()
                             end
 
-                            -- Проверяем, собралось ли
                             local ok = waitCollected(target, 0.3)
                             if ok then
                                 farmCollected[target] = true
@@ -997,9 +1009,6 @@ function startAutoFarm()
                                     farmCollected[target] = true
                                 end
                             end
-
-                            -- НЕ останавливаем flyBV — сразу летим к следующей
-                            -- (следующая итерация цикла вызовет setFlyVelocityTo на новую цель)
                         end
                     end
                 end
