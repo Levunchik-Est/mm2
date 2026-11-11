@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly: влетаем в конфету и сразу летим дальше)
+-- AUTO FARM (Fly: влетаем телом в конфету и летим дальше)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -730,7 +730,7 @@ State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
 
 -- ------------------------------------------------------------
--- NoClip
+-- NoClip (постоянное отключение коллизий каждый физический кадр)
 -- ------------------------------------------------------------
 local noclipConn = nil
 
@@ -968,7 +968,7 @@ function startAutoFarm()
                             end
                             task.wait(FARM_TP_INTERVAL)
 
-                        -- FLY (Lying / Standing) — ВЛЕТАЕМ И ЛЕТИМ ДАЛЬШЕ
+                        -- FLY (Lying / Standing) — ВЛЕТАЕМ ТЕЛОМ И ЛЕТИМ ДАЛЬШЕ
                         else
                             local lying = (mode == "Fly Lying")
 
@@ -976,10 +976,11 @@ function startAutoFarm()
                                 startFlyPhysics()
                             end
 
-                            -- Летим к цели, проверяя сбор НА ЛЕТУ
                             local flyStart = tick()
-                            local maxFlyTime = 8
-                            local flewPast = false
+                            local maxFlyTime = 6
+                            local lastDir = nil
+                            local flewThrough = false
+
                             while State.AutoFarm and not State._closed and target.Parent do
                                 if tick() - flyStart > maxFlyTime then break end
 
@@ -989,33 +990,35 @@ function startAutoFarm()
                                 local toTarget = target.Position - hrp.Position
                                 local dist = toTarget.Magnitude
 
-                                -- Если пролетели мимо (оказались позади) — выходим
-                                if dist > 1 and flewPast then
-                                    -- проверяем, не пролетели ли мы точку: скалярное произведение
-                                    -- направления скорости на вектор к цели < 0 => пролетели
+                                -- Проверяем, пролетели ли мы конфету насквозь:
+                                -- если направление к цели сменилось на противоположное — мы за ней
+                                if lastDir and dist > 0.5 then
+                                    local dot = lastDir:Dot(toTarget.Unit)
+                                    if dot < 0 then
+                                        flewThrough = true
+                                        break
+                                    end
                                 end
+                                lastDir = toTarget.Unit
 
-                                -- Ставим скорость к цели
+                                -- Летим прямо в конфету, БЕЗ торможения
                                 setFlyVelocityTo(target.Position, lying)
 
-                                -- Каждый кадр проверяем, не собралась ли конфета
+                                -- Если конфета исчезла — собрана
                                 if not target.Parent then break end
 
-                                -- Если очень близко — просто пролетаем, не тормозим
-                                if dist < 2 then
-                                    -- Продолжаем лететь вперёд, но целимся уже в следующую
-                                    flewPast = true
-                                    break
+                                -- Если очень близко — добавляем 1 кадр, чтобы тело точно пересекло хитбокс
+                                if dist < 3 then
+                                    task.wait()
                                 end
 
                                 task.wait()
                             end
 
-                            -- Проверка: если не собралось за 0.05 сек — считаем попытку
+                            -- Проверка сбора
                             if not target.Parent then
                                 farmCollected[target] = true
                             else
-                                -- Даём ещё 0.1 сек на регистрацию, но НЕ тормозим
                                 local ok = waitCollected(target, 0.1)
                                 if ok then
                                     farmCollected[target] = true
@@ -1046,6 +1049,7 @@ function stopAutoFarm()
     farmAttempts = {}
     stopFlyPhysics()
 end
+
 -- ============================================================
 -- ESP ROLES (подсветка тела сквозь стены)
 -- ============================================================
