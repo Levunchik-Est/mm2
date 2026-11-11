@@ -715,12 +715,12 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (переписан с нуля по ТЗ)
+-- AUTO FARM (улучшенный: надёжный сбор)
 -- ============================================================
-local farmCollected = {}          -- [Instance] = true  — уже собрано
-local farmAttempts  = {}          -- [Instance] = number — сколько попыток
-local MAX_ATTEMPTS  = 3           -- попыток на одну конфету
-local FARM_TP_INTERVAL = 2        -- строго 2 секунды (только для телепортов)
+local farmCollected = {}
+local farmAttempts  = {}
+local MAX_ATTEMPTS  = 5
+local FARM_TP_INTERVAL = 2
 local FARM_SPEED_DEFAULT = 25
 
 if State.FarmSpeed == nil or State.FarmSpeed == 35 then
@@ -730,8 +730,15 @@ State.FarmOrder = State.FarmOrder or "Nearest Item"
 State.FarmMode  = State.FarmMode  or "Fly Lying"
 
 -- ------------------------------------------------------------
--- Поиск предметов
+-- Проверка, что объект вообще может регистрировать Touch
 -- ------------------------------------------------------------
+local function canCollect(item)
+    if not item or not item.Parent then return false end
+    if item.CanTouch == false then return false end
+    if not item:FindFirstChild("TouchInterest") then return false end
+    return true
+end
+
 local function isCandyPart(obj)
     if not obj or not obj.Parent then return false end
     if not obj:IsA("BasePart") then return false end
@@ -744,7 +751,7 @@ local function findItems()
     local items = {}
     local myChar = LocalPlayer.Character
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if isCandyPart(obj) then
+        if isCandyPart(obj) and canCollect(obj) then
             if not myChar or not obj:IsDescendantOf(myChar) then
                 if not farmCollected[obj] then
                     table.insert(items, obj)
@@ -814,25 +821,30 @@ local function applyMicroJitter(hrp, baseY)
 end
 
 -- ------------------------------------------------------------
--- TELEPORT (обычный)
+-- TELEPORT (обычный) — с несколькими "кадрами" на точке
 -- ------------------------------------------------------------
 local function doTeleportNormal(targetPos)
     local hrp = getHRP()
-    if not hrp then return end
-    hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 3, targetPos.Z)
-    hrp.AssemblyLinearVelocity = Vector3.zero
+    local hum = getHumanoid()
+    if not hrp or not hum then return end
+    -- Ставим точно в конфету и держим 4 кадра для регистрации Touch
+    local fixedCF = CFrame.new(targetPos.X, targetPos.Y + 2.5, targetPos.Z)
+    for i = 1, 4 do
+        hrp.CFrame = fixedCF
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        task.wait(0.03)
+    end
 end
 
 -- ------------------------------------------------------------
--- UNDERGROUND TELEPORT
+-- UNDERGROUND TELEPORT — держим под конфетой дольше
 -- ------------------------------------------------------------
 local function doTeleportUnderground(targetPos)
     local hrp = getHRP()
     if not hrp then return end
+    -- Ставим так, чтобы голова касалась конфеты
     local fixedCF = CFrame.new(targetPos.X, targetPos.Y - 4.5, targetPos.Z)
-    hrp.CFrame = fixedCF
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    local holdUntil = tick() + 0.5
+    local holdUntil = tick() + 0.8
     local holdThread = task.spawn(function()
         while tick() < holdUntil and State.AutoFarm and not State._closed do
             local h = getHRP()
@@ -840,14 +852,14 @@ local function doTeleportUnderground(targetPos)
                 h.CFrame = fixedCF
                 h.AssemblyLinearVelocity = Vector3.zero
             end
-            task.wait(0.05)
+            task.wait(0.03)
         end
     end)
     return holdThread
 end
 
 -- ------------------------------------------------------------
--- FLY шаг
+-- FLY шаг: подлёт + фиксация на точке для Touch
 -- ------------------------------------------------------------
 local function doFlyStep(targetPos, lying, fixedY)
     local hrp = getHRP()
@@ -856,7 +868,18 @@ local function doFlyStep(targetPos, lying, fixedY)
 
     local current = hrp.Position
     local dir = Vector3.new(targetPos.X - current.X, 0, targetPos.Z - current.Z)
-    if dir.Magnitude < 2 then
+
+    -- Достигли: держим позицию 3 кадра для регистрации Touch
+    if dir.Magnitude < 3 then
+        local fixedCF = CFrame.new(targetPos.X, fixedY, targetPos.Z)
+        if lying then
+            fixedCF = fixedCF * CFrame.Angles(0, 0, math.rad(90))
+        end
+        for i = 1, 3 do
+            hrp.CFrame = fixedCF
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            task.wait(0.04)
+        end
         return true
     end
 
@@ -910,8 +933,15 @@ function startAutoFarm()
                         -------------------------------------------------
                         if mode == "Teleport" then
                             doTeleportNormal(target.Position)
-                            waitCollected(target, 1.5)
-                            farmCollected[target] = true
+                            local ok = waitCollected(target, 1.0)
+                            if ok then
+                                farmCollected[target] = true
+                            else
+                                farmAttempts[target] = (farmAttempts[target] or 0) + 1
+                                if farmAttempts[target] >= MAX_ATTEMPTS then
+                                    farmCollected[target] = true
+                                end
+                            end
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
@@ -919,13 +949,20 @@ function startAutoFarm()
                         -------------------------------------------------
                         elseif mode == "Underground Teleport" then
                             local hold = doTeleportUnderground(target.Position)
-                            waitCollected(target, 1.5)
+                            local ok = waitCollected(target, 1.0)
                             if hold then pcall(function() task.cancel(hold) end) end
-                            farmCollected[target] = true
+                            if ok then
+                                farmCollected[target] = true
+                            else
+                                farmAttempts[target] = (farmAttempts[target] or 0) + 1
+                                if farmAttempts[target] >= MAX_ATTEMPTS then
+                                    farmCollected[target] = true
+                                end
+                            end
                             task.wait(FARM_TP_INTERVAL)
 
                         -------------------------------------------------
-                        -- FLY (Lying / Standing) — БЕЗ кулдауна
+                        -- FLY (Lying / Standing)
                         -------------------------------------------------
                         else
                             local lying = (mode == "Fly Lying")
@@ -952,17 +989,33 @@ function startAutoFarm()
                             setNoCollide(false)
                             freezeForFly(false)
 
-                            -- Минимальная проверка сбора: 0.15 сек, выходим сразу при Parent == nil
-                            local ok = waitCollected(target, 0.15)
+                            -- Проверка сбора: до 0.3 сек, выходим сразу при Parent == nil
+                            local ok = waitCollected(target, 0.3)
                             if ok then
                                 farmCollected[target] = true
                             else
                                 farmAttempts[target] = (farmAttempts[target] or 0) + 1
+                                -- Если не собралось — пробуем ещё раз к этой же конфете
+                                if farmAttempts[target] < MAX_ATTEMPTS and target.Parent then
+                                    task.wait(0.1)
+                                    -- Повторный подлёт к той же конфете
+                                    local retryDeadline = tick() + 2
+                                    while State.AutoFarm and not State._closed and target.Parent do
+                                        if tick() > retryDeadline then break end
+                                        if doFlyStep(target.Position, lying, fixedY) then
+                                            break
+                                        end
+                                        task.wait()
+                                    end
+                                    local ok2 = waitCollected(target, 0.3)
+                                    if ok2 then
+                                        farmCollected[target] = true
+                                    end
+                                end
                                 if farmAttempts[target] >= MAX_ATTEMPTS then
                                     farmCollected[target] = true
                                 end
                             end
-                            -- Никаких task.wait после — сразу к следующей конфете
                         end
                     end
                 end
