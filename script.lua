@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на TweenService — меньше риск 267)
+-- AUTO FARM (Fly на Tween + безопасная высота через Raycast)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -798,9 +798,7 @@ end
 local function reserve(item)
     if not item or not item.Parent then return false end
     local owner = item:GetAttribute("MM2_TargetedBy")
-    if owner ~= nil and owner ~= MY_UID then
-        return false
-    end
+    if owner ~= nil and owner ~= MY_UID then return false end
     pcall(function() item:SetAttribute("MM2_TargetedBy", MY_UID) end)
     return true
 end
@@ -834,9 +832,7 @@ end
 local function pickTarget(items, fromPos)
     local free = {}
     for _, it in ipairs(items) do
-        if isFree(it) then
-            table.insert(free, it)
-        end
+        if isFree(it) then table.insert(free, it) end
     end
     if #free == 0 then return nil end
 
@@ -860,12 +856,24 @@ end
 local function waitCollected(item, timeout)
     local deadline = tick() + (timeout or 2)
     while tick() < deadline do
-        if not item or not item.Parent then
-            return true
-        end
+        if not item or not item.Parent then return true end
         task.wait(0.02)
     end
     return false
+end
+
+-- ------------------------------------------------------------
+-- Безопасная высота полёта через Raycast вниз
+-- ------------------------------------------------------------
+local function getSafeFlyY(pos)
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = {LocalPlayer.Character}
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local result = Workspace:Raycast(pos + Vector3.new(0, 5, 0), Vector3.new(0, -200, 0), params)
+    if result then
+        return result.Position.Y + 3
+    end
+    return pos.Y + 2
 end
 
 -- ------------------------------------------------------------
@@ -901,7 +909,7 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY на TweenService (плавно, без BodyVelocity)
+-- FLY на TweenService
 -- ------------------------------------------------------------
 local flyTween = nil
 local flyTweenConn = nil
@@ -920,32 +928,35 @@ local function stopFlyTween()
     stopNoclip()
 end
 
--- Плавно перемещает HRP к цели со скоростью speed.
--- Возвращает true, если долетели, false — если отмена/цель исчезла.
+-- Плавное перемещение к цели на безопасной высоте.
+-- Возвращает true, если долетели; false — если отмена/цель исчезла.
 local function tweenToTarget(target, speed, lying)
     local hrp = getHRP()
     if not hrp or not target or not target.Parent then return false end
 
     local startPos = hrp.Position
-    local targetPos = target.Position
+    local safeY = getSafeFlyY(startPos)
+    local targetPos = Vector3.new(target.Position.X, safeY, target.Position.Z)
+
     local dist = (targetPos - startPos).Magnitude
     if dist < 0.5 then return true end
 
     local duration = dist / math.max(speed, 1)
 
-    -- Подготавливаем финальный CFrame с учётом "лёжа"
-    local finalCF = CFrame.new(targetPos)
+    local finalCF = CFrame.new(targetPos, Vector3.new(target.Position.X, safeY, target.Position.Z))
     if lying then
         finalCF = finalCF * CFrame.Angles(0, 0, math.rad(90))
     end
 
-    -- Создаём твин
     local info = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0)
     flyTween = TweenService:Create(hrp, info, {CFrame = finalCF})
 
-    -- Отслеживаем, исчезла ли цель — тогда отменяем твин
     local cancelled = false
     flyTweenConn = RunService.Heartbeat:Connect(function()
+        local h = getHRP()
+        if h then
+            h.AssemblyLinearVelocity = Vector3.zero
+        end
         if not target or not target.Parent then
             cancelled = true
             if flyTween then pcall(function() flyTween:Cancel() end) end
@@ -995,7 +1006,6 @@ function startAutoFarm()
                     freezeForFly(true)
                     startNoclip()
 
-                    -- Если цели нет / исчезла / забрана другим — ищем новую
                     if not currentTarget or not currentTarget.Parent
                        or (currentTarget:GetAttribute("MM2_TargetedBy") ~= MY_UID
                            and currentTarget:GetAttribute("MM2_TargetedBy") ~= nil) then
@@ -1019,7 +1029,6 @@ function startAutoFarm()
                         end
                     end
 
-                    -- Летим к текущей цели твином
                     if currentTarget then
                         if not currentTarget.Parent then
                             farmCollected[currentTarget] = true
@@ -1029,13 +1038,11 @@ function startAutoFarm()
                             local speed = State.FarmSpeed
                             local reached = tweenToTarget(currentTarget, speed, lying)
 
-                            -- Проверяем, собралась ли конфета во время полёта
                             if not currentTarget.Parent then
                                 farmCollected[currentTarget] = true
                                 release(currentTarget)
                                 currentTarget = nil
                             elseif reached then
-                                -- Долетели, но не собралось — попытка +1
                                 farmAttempts[currentTarget] = (farmAttempts[currentTarget] or 0) + 1
                                 if farmAttempts[currentTarget] >= MAX_ATTEMPTS then
                                     farmCollected[currentTarget] = true
