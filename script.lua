@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на Tween + автосброс между раундами)
+-- AUTO FARM (Fly на Tween по X/Z, высота фиксирована)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -863,19 +863,6 @@ local function waitCollected(item, timeout)
 end
 
 -- ------------------------------------------------------------
--- Безопасная высота
--- ------------------------------------------------------------
-local function getSafeFlyY(targetXZ)
-    local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {LocalPlayer.Character}
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    local origin = Vector3.new(targetXZ.X, 200, targetXZ.Z)
-    local result = Workspace:Raycast(origin, Vector3.new(0, -400, 0), params)
-    if result then return result.Position.Y + 3 end
-    return nil
-end
-
--- ------------------------------------------------------------
 -- TELEPORT
 -- ------------------------------------------------------------
 local function doTeleportNormal(targetPos)
@@ -908,7 +895,7 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY на Tween
+-- FLY на Tween: горизонтально на текущей высоте
 -- ------------------------------------------------------------
 local flyTween = nil
 local flyTweenConn = nil
@@ -926,22 +913,21 @@ local function stopFlyTween()
     stopNoclip()
 end
 
+-- Ведёт к цели по X/Z, Y берётся из СТАРТОВОЙ позиции персонажа
 local function tweenToTarget(target, speed, lying)
     local hrp = getHRP()
     if not hrp or not target or not target.Parent then return false end
 
-    local safeY = getSafeFlyY(target.Position)
-    if not safeY then return false end
-
     local startPos = hrp.Position
-    local targetPos = Vector3.new(target.Position.X, safeY, target.Position.Z)
+    -- Y = текущая высота персонажа. Не меняем. Не летим вниз/вверх.
+    local targetPos = Vector3.new(target.Position.X, startPos.Y, target.Position.Z)
 
     local dist = (targetPos - startPos).Magnitude
     if dist < 0.5 then return true end
 
     local duration = dist / math.max(speed, 1)
 
-    local finalCF = CFrame.new(targetPos, Vector3.new(target.Position.X, safeY, target.Position.Z))
+    local finalCF = CFrame.new(targetPos, Vector3.new(target.Position.X, startPos.Y, target.Position.Z))
     if lying then
         finalCF = finalCF * CFrame.Angles(0, 0, math.rad(90))
     end
@@ -973,10 +959,9 @@ local function tweenToTarget(target, speed, lying)
 end
 
 -- ------------------------------------------------------------
--- Автосброс при смене раунда / карты
+-- Автосброс при смене раунда
 -- ------------------------------------------------------------
 local function resetRoundState()
-    release(nil)
     farmCollected = {}
     farmAttempts = {}
 end
@@ -991,8 +976,8 @@ function startAutoFarm()
 
     State._farmThread = task.spawn(function()
         local currentTarget = nil
-        local emptyStreakStart = nil   -- когда конфеты впервые пропали
-        local EMPTY_RESET_SEC = 5      -- через 5 сек пустоты — сброс состояния
+        local emptyStreakStart = nil
+        local EMPTY_RESET_SEC = 5
 
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
@@ -1006,20 +991,17 @@ function startAutoFarm()
                 task.wait(0.5)
             else
                 local mode = State.FarmMode
-                local allItems = findItems()   -- сырой список (без учёта farmCollected)
+                local allItems = findItems()
 
-                -- === Автосброс между раундами ===
                 if #allItems == 0 then
                     if not emptyStreakStart then
                         emptyStreakStart = tick()
                     elseif tick() - emptyStreakStart > EMPTY_RESET_SEC then
-                        -- Конфет нет долго — значит раунд закончился/сменился.
-                        -- Сбрасываем состояние, чтобы следующий раунд начался с нуля.
                         resetRoundState()
                         release(currentTarget)
                         currentTarget = nil
                         stopFlyTween()
-                        emptyStreakStart = tick()  -- не сбрасываем в nil, чтобы не спамить
+                        emptyStreakStart = tick()
                     end
                     task.wait(0.4)
                 else
