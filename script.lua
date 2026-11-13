@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (резервирование конфет через SetAttribute)
+-- AUTO FARM (Fly на Tween + автосброс между раундами)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -786,7 +786,7 @@ local function isCandyPart(obj)
 end
 
 -- ------------------------------------------------------------
--- Резервирование конфеты
+-- Резервирование
 -- ------------------------------------------------------------
 local MY_UID = LocalPlayer.UserId
 
@@ -798,9 +798,7 @@ end
 local function reserve(item)
     if not item or not item.Parent then return false end
     local owner = item:GetAttribute("MM2_TargetedBy")
-    if owner ~= nil and owner ~= MY_UID then
-        return false
-    end
+    if owner ~= nil and owner ~= MY_UID then return false end
     pcall(function() item:SetAttribute("MM2_TargetedBy", MY_UID) end)
     return true
 end
@@ -814,7 +812,7 @@ local function release(item)
 end
 
 -- ------------------------------------------------------------
--- Поиск предметов
+-- Поиск
 -- ------------------------------------------------------------
 local function findItems()
     local items = {}
@@ -834,13 +832,9 @@ end
 local function pickTarget(items, fromPos)
     local free = {}
     for _, it in ipairs(items) do
-        if isFree(it) then
-            table.insert(free, it)
-        end
+        if isFree(it) then table.insert(free, it) end
     end
-    if #free == 0 then
-        return nil
-    end
+    if #free == 0 then return nil end
 
     if State.FarmOrder == "Random Item" then
         return free[math.random(1, #free)]
@@ -862,12 +856,23 @@ end
 local function waitCollected(item, timeout)
     local deadline = tick() + (timeout or 2)
     while tick() < deadline do
-        if not item or not item.Parent then
-            return true
-        end
+        if not item or not item.Parent then return true end
         task.wait(0.02)
     end
     return false
+end
+
+-- ------------------------------------------------------------
+-- Безопасная высота
+-- ------------------------------------------------------------
+local function getSafeFlyY(targetXZ)
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = {LocalPlayer.Character}
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local origin = Vector3.new(targetXZ.X, 200, targetXZ.Z)
+    local result = Workspace:Raycast(origin, Vector3.new(0, -400, 0), params)
+    if result then return result.Position.Y + 3 end
+    return nil
 end
 
 -- ------------------------------------------------------------
@@ -903,65 +908,77 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY на BodyVelocity + BodyGyro
+-- FLY на Tween
 -- ------------------------------------------------------------
-local flyBV = nil
-local flyBG = nil
+local flyTween = nil
+local flyTweenConn = nil
 
-local function startFlyPhysics()
-    local hrp = getHRP()
-    local hum = getHumanoid()
-    if not hrp or not hum then return end
-
-    hum.PlatformStand = true
-    startNoclip()
-
-    flyBV = Instance.new("BodyVelocity")
-    flyBV.Name = "MM2_FlyBV"
-    flyBV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    flyBV.Velocity = Vector3.zero
-    flyBV.Parent = hrp
-
-    flyBG = Instance.new("BodyGyro")
-    flyBG.Name = "MM2_FlyBG"
-    flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-    flyBG.CFrame = hrp.CFrame
-    flyBG.Parent = hrp
-end
-
-local function stopFlyPhysics()
-    if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
-    if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
-    local hum = getHumanoid()
-    if hum then hum.PlatformStand = false end
+local function stopFlyTween()
+    if flyTweenConn then
+        pcall(function() flyTweenConn:Disconnect() end)
+        flyTweenConn = nil
+    end
+    if flyTween then
+        pcall(function() flyTween:Cancel() end)
+        flyTween = nil
+    end
+    freezeForFly(false)
     stopNoclip()
 end
 
-local function setFlyVelocityTo(targetPos, lying)
-    if not flyBV or not flyBG then return end
+local function tweenToTarget(target, speed, lying)
     local hrp = getHRP()
-    if not hrp then return end
+    if not hrp or not target or not target.Parent then return false end
 
-    local dir = targetPos - hrp.Position
-    local dist = dir.Magnitude
+    local safeY = getSafeFlyY(target.Position)
+    if not safeY then return false end
 
-    if dist < 0.05 then
-        local lookAt = CFrame.new(hrp.Position, targetPos)
-        if lying then
-            lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
-        end
-        flyBG.CFrame = lookAt
-        return
-    end
+    local startPos = hrp.Position
+    local targetPos = Vector3.new(target.Position.X, safeY, target.Position.Z)
 
-    local speed = State.FarmSpeed
-    flyBV.Velocity = dir.Unit * speed
+    local dist = (targetPos - startPos).Magnitude
+    if dist < 0.5 then return true end
 
-    local lookAt = CFrame.new(hrp.Position, targetPos)
+    local duration = dist / math.max(speed, 1)
+
+    local finalCF = CFrame.new(targetPos, Vector3.new(target.Position.X, safeY, target.Position.Z))
     if lying then
-        lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
+        finalCF = finalCF * CFrame.Angles(0, 0, math.rad(90))
     end
-    flyBG.CFrame = lookAt
+
+    local info = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0)
+    flyTween = TweenService:Create(hrp, info, {CFrame = finalCF})
+
+    local cancelled = false
+    flyTweenConn = RunService.Heartbeat:Connect(function()
+        local h = getHRP()
+        if h then h.AssemblyLinearVelocity = Vector3.zero end
+        if not target or not target.Parent then
+            cancelled = true
+            if flyTween then pcall(function() flyTween:Cancel() end) end
+            if flyTweenConn then pcall(function() flyTweenConn:Disconnect() end); flyTweenConn = nil end
+        end
+    end)
+
+    flyTween:Play()
+    flyTween.Completed:Wait()
+
+    if flyTweenConn then
+        pcall(function() flyTweenConn:Disconnect() end)
+        flyTweenConn = nil
+    end
+    flyTween = nil
+
+    return not cancelled
+end
+
+-- ------------------------------------------------------------
+-- Автосброс при смене раунда / карты
+-- ------------------------------------------------------------
+local function resetRoundState()
+    release(nil)
+    farmCollected = {}
+    farmAttempts = {}
 end
 
 -- ------------------------------------------------------------
@@ -974,26 +991,44 @@ function startAutoFarm()
 
     State._farmThread = task.spawn(function()
         local currentTarget = nil
+        local emptyStreakStart = nil   -- когда конфеты впервые пропали
+        local EMPTY_RESET_SEC = 5      -- через 5 сек пустоты — сброс состояния
 
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
             local hum = getHumanoid()
 
             if not hrp or not hum or hum.Health <= 0 then
-                stopFlyPhysics()
+                stopFlyTween()
                 release(currentTarget)
                 currentTarget = nil
+                emptyStreakStart = nil
                 task.wait(0.5)
             else
                 local mode = State.FarmMode
+                local allItems = findItems()   -- сырой список (без учёта farmCollected)
+
+                -- === Автосброс между раундами ===
+                if #allItems == 0 then
+                    if not emptyStreakStart then
+                        emptyStreakStart = tick()
+                    elseif tick() - emptyStreakStart > EMPTY_RESET_SEC then
+                        -- Конфет нет долго — значит раунд закончился/сменился.
+                        -- Сбрасываем состояние, чтобы следующий раунд начался с нуля.
+                        resetRoundState()
+                        release(currentTarget)
+                        currentTarget = nil
+                        stopFlyTween()
+                        emptyStreakStart = tick()  -- не сбрасываем в nil, чтобы не спамить
+                    end
+                    task.wait(0.4)
+                else
+                    emptyStreakStart = nil
+                end
 
                 -- ============ FLY ============
                 if mode == "Fly Lying" or mode == "Fly Standing" then
                     local lying = (mode == "Fly Lying")
-
-                    if not flyBV then
-                        startFlyPhysics()
-                    end
 
                     if not currentTarget or not currentTarget.Parent
                        or (currentTarget:GetAttribute("MM2_TargetedBy") ~= MY_UID
@@ -1003,17 +1038,18 @@ function startAutoFarm()
 
                         local items = findItems()
                         if #items == 0 then
-                            flyBV.Velocity = Vector3.zero
+                            stopFlyTween()
                             task.wait(0.4)
                         else
                             local candidate = pickTarget(items, hrp.Position)
                             if not candidate then
-                                flyBV.Velocity = Vector3.zero
+                                stopFlyTween()
                                 task.wait(0.25)
                             else
                                 if reserve(candidate) then
                                     currentTarget = candidate
                                 else
+                                    stopFlyTween()
                                     task.wait(0.05)
                                 end
                             end
@@ -1023,16 +1059,30 @@ function startAutoFarm()
                     if currentTarget then
                         if not currentTarget.Parent then
                             farmCollected[currentTarget] = true
+                            release(currentTarget)
                             currentTarget = nil
                         else
-                            setFlyVelocityTo(currentTarget.Position, lying)
+                            freezeForFly(true)
+                            startNoclip()
 
-                            local dist = (currentTarget.Position - hrp.Position).Magnitude
-                            if dist < 1.5 then
+                            local speed = State.FarmSpeed
+                            local reached = tweenToTarget(currentTarget, speed, lying)
+
+                            if not currentTarget.Parent then
                                 farmCollected[currentTarget] = true
                                 release(currentTarget)
                                 currentTarget = nil
+                            elseif reached then
+                                farmAttempts[currentTarget] = (farmAttempts[currentTarget] or 0) + 1
+                                if farmAttempts[currentTarget] >= MAX_ATTEMPTS then
+                                    farmCollected[currentTarget] = true
+                                end
+                                release(currentTarget)
+                                currentTarget = nil
                             end
+
+                            freezeForFly(false)
+                            stopNoclip()
                         end
                     end
 
@@ -1040,7 +1090,7 @@ function startAutoFarm()
 
                 -- ============ TELEPORT ============
                 elseif mode == "Teleport" then
-                    stopFlyPhysics()
+                    stopFlyTween()
                     release(currentTarget)
                     currentTarget = nil
                     local items = findItems()
@@ -1067,7 +1117,7 @@ function startAutoFarm()
 
                 -- ============ UNDERGROUND TELEPORT ============
                 elseif mode == "Underground Teleport" then
-                    stopFlyPhysics()
+                    stopFlyTween()
                     release(currentTarget)
                     currentTarget = nil
                     local items = findItems()
@@ -1100,7 +1150,7 @@ function startAutoFarm()
         end
 
         release(currentTarget)
-        stopFlyPhysics()
+        stopFlyTween()
     end)
 end
 
@@ -1116,7 +1166,7 @@ function stopAutoFarm()
     end
     farmCollected = {}
     farmAttempts = {}
-    stopFlyPhysics()
+    stopFlyTween()
 end
 
 -- ============================================================
