@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на Tween + безопасная высота через Raycast)
+-- AUTO FARM (Fly на Tween + безопасная высота)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -786,7 +786,7 @@ local function isCandyPart(obj)
 end
 
 -- ------------------------------------------------------------
--- Резервирование конфеты
+-- Резервирование
 -- ------------------------------------------------------------
 local MY_UID = LocalPlayer.UserId
 
@@ -812,7 +812,7 @@ local function release(item)
 end
 
 -- ------------------------------------------------------------
--- Поиск предметов
+-- Поиск
 -- ------------------------------------------------------------
 local function findItems()
     local items = {}
@@ -863,17 +863,20 @@ local function waitCollected(item, timeout)
 end
 
 -- ------------------------------------------------------------
--- Безопасная высота полёта через Raycast вниз
+-- Безопасная высота: Raycast от ВЫСОКОЙ точки над конфетой,
+-- а не от игрока. Если пола нет — nil (не летим).
 -- ------------------------------------------------------------
-local function getSafeFlyY(pos)
+local function getSafeFlyY(targetXZ)
     local params = RaycastParams.new()
     params.FilterDescendantsInstances = {LocalPlayer.Character}
     params.FilterType = Enum.RaycastFilterType.Exclude
-    local result = Workspace:Raycast(pos + Vector3.new(0, 5, 0), Vector3.new(0, -200, 0), params)
+    -- Ищем пол прямо над целью: стартуем с 200 studs выше и бьём вниз
+    local origin = Vector3.new(targetXZ.X, 200, targetXZ.Z)
+    local result = Workspace:Raycast(origin, Vector3.new(0, -400, 0), params)
     if result then
         return result.Position.Y + 3
     end
-    return pos.Y + 2
+    return nil  -- пола нет — не летим
 end
 
 -- ------------------------------------------------------------
@@ -909,7 +912,7 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY на TweenService
+-- FLY на Tween
 -- ------------------------------------------------------------
 local flyTween = nil
 local flyTweenConn = nil
@@ -923,19 +926,21 @@ local function stopFlyTween()
         pcall(function() flyTween:Cancel() end)
         flyTween = nil
     end
-    local hum = getHumanoid()
-    if hum then hum.PlatformStand = false end
+    freezeForFly(false)
     stopNoclip()
 end
 
--- Плавное перемещение к цели на безопасной высоте.
--- Возвращает true, если долетели; false — если отмена/цель исчезла.
 local function tweenToTarget(target, speed, lying)
     local hrp = getHRP()
     if not hrp or not target or not target.Parent then return false end
 
+    local safeY = getSafeFlyY(target.Position)
+    if not safeY then
+        -- пола нет — не летим
+        return false
+    end
+
     local startPos = hrp.Position
-    local safeY = getSafeFlyY(startPos)
     local targetPos = Vector3.new(target.Position.X, safeY, target.Position.Z)
 
     local dist = (targetPos - startPos).Magnitude
@@ -954,9 +959,7 @@ local function tweenToTarget(target, speed, lying)
     local cancelled = false
     flyTweenConn = RunService.Heartbeat:Connect(function()
         local h = getHRP()
-        if h then
-            h.AssemblyLinearVelocity = Vector3.zero
-        end
+        if h then h.AssemblyLinearVelocity = Vector3.zero end
         if not target or not target.Parent then
             cancelled = true
             if flyTween then pcall(function() flyTween:Cancel() end) end
@@ -999,13 +1002,11 @@ function startAutoFarm()
             else
                 local mode = State.FarmMode
 
-                -- ============ FLY (Lying / Standing) на Tween ============
+                -- ============ FLY (Tween) ============
                 if mode == "Fly Lying" or mode == "Fly Standing" then
                     local lying = (mode == "Fly Lying")
 
-                    freezeForFly(true)
-                    startNoclip()
-
+                    -- Если цели нет или исчезла — ищем. Физику не трогаем!
                     if not currentTarget or not currentTarget.Parent
                        or (currentTarget:GetAttribute("MM2_TargetedBy") ~= MY_UID
                            and currentTarget:GetAttribute("MM2_TargetedBy") ~= nil) then
@@ -1014,27 +1015,36 @@ function startAutoFarm()
 
                         local items = findItems()
                         if #items == 0 then
+                            -- Нет конфет — стоим, физику НЕ трогаем
+                            stopFlyTween()
                             task.wait(0.4)
                         else
                             local candidate = pickTarget(items, hrp.Position)
                             if not candidate then
+                                stopFlyTween()
                                 task.wait(0.25)
                             else
                                 if reserve(candidate) then
                                     currentTarget = candidate
                                 else
+                                    stopFlyTween()
                                     task.wait(0.05)
                                 end
                             end
                         end
                     end
 
+                    -- Летим только если есть цель
                     if currentTarget then
                         if not currentTarget.Parent then
                             farmCollected[currentTarget] = true
                             release(currentTarget)
                             currentTarget = nil
                         else
+                            -- Включаем физику полёта ТОЛЬКО сейчас
+                            freezeForFly(true)
+                            startNoclip()
+
                             local speed = State.FarmSpeed
                             local reached = tweenToTarget(currentTarget, speed, lying)
 
@@ -1050,6 +1060,10 @@ function startAutoFarm()
                                 release(currentTarget)
                                 currentTarget = nil
                             end
+
+                            -- После полёта возвращаем физику
+                            freezeForFly(false)
+                            stopNoclip()
                         end
                     end
 
