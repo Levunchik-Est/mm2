@@ -715,16 +715,15 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly: без остановок + Teleport с рандомным интервалом)
+-- AUTO FARM (Fly: без остановки, с поворотом лицом к цели)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
 local MAX_ATTEMPTS  = 5
-local FARM_TP_MIN   = 1.95   -- минимальный интервал телепорта
-local FARM_TP_MAX   = 2.05   -- максимальный интервал телепорта
+local FARM_TP_MIN   = 1.95
+local FARM_TP_MAX   = 2.05
 local FARM_SPEED_DEFAULT = 25
 
--- Случайный интервал телепортации в диапазоне [MIN, MAX]
 local function randomTPInterval()
     return FARM_TP_MIN + math.random() * (FARM_TP_MAX - FARM_TP_MIN)
 end
@@ -863,7 +862,7 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY на BodyVelocity + NoClip
+-- FLY на BodyVelocity + BodyGyro
 -- ------------------------------------------------------------
 local flyBV = nil
 local flyBG = nil
@@ -897,27 +896,41 @@ local function stopFlyPhysics()
     stopNoclip()
 end
 
+-- ------------------------------------------------------------
+-- Управление полётом:
+--   * задаёт скорость к цели
+--   * каждый кадр поворачивает BodyGyro лицом к цели
+--   * при очень близком расстоянии НЕ тормозит, а сохраняет скорость,
+--     чтобы следующий кадр сразу переключился на новую цель
+-- ------------------------------------------------------------
 local function setFlyVelocityTo(targetPos, lying)
-    if not flyBV then return end
+    if not flyBV or not flyBG then return end
     local hrp = getHRP()
     if not hrp then return end
 
-    local dir = (targetPos - hrp.Position)
-    if dir.Magnitude < 0.5 then
-        flyBV.Velocity = Vector3.zero
-        return
-    end
+    local dir = targetPos - hrp.Position
+    local dist = dir.Magnitude
 
-    local speed = State.FarmSpeed
-    flyBV.Velocity = dir.Unit * speed
-
-    if flyBG then
+    if dist < 0.05 then
+        -- уже в точке; скорость не трогаем, только ориентацию
         local lookAt = CFrame.new(hrp.Position, targetPos)
         if lying then
             lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
         end
         flyBG.CFrame = lookAt
+        return
     end
+
+    -- Скорость всегда направлена в цель, без обнуления при подходе
+    local speed = State.FarmSpeed
+    flyBV.Velocity = dir.Unit * speed
+
+    -- Каждый кадр поворачиваем лицом к цели (с учётом "лёжа")
+    local lookAt = CFrame.new(hrp.Position, targetPos)
+    if lying then
+        lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
+    end
+    flyBG.CFrame = lookAt
 end
 
 -- ------------------------------------------------------------
@@ -950,6 +963,7 @@ function startAutoFarm()
                         startFlyPhysics()
                     end
 
+                    -- Если цели нет или она исчезла — ищем новую
                     if not currentTarget or not currentTarget.Parent then
                         if currentTarget then
                             farmCollected[currentTarget] = true
@@ -968,16 +982,20 @@ function startAutoFarm()
                         end
                     end
 
+                    -- Летим к текущей цели БЕЗ остановок
                     if currentTarget then
                         if not currentTarget.Parent then
                             farmCollected[currentTarget] = true
                             currentTarget = nil
                         else
-                            local toTarget = currentTarget.Position - hrp.Position
-                            local dist = toTarget.Magnitude
-
+                            -- Каждый кадр: скорость в цель + поворот лицом
                             setFlyVelocityTo(currentTarget.Position, lying)
 
+                            -- Если дистанция стала очень маленькой — считаем цель
+                            -- «достигнутой» и на СЛЕДУЮЩЕМ кадре берём новую.
+                            -- Скорость НЕ обнуляем, чтобы не было остановки:
+                            -- к следующей цели полёт продолжится сразу.
+                            local dist = (currentTarget.Position - hrp.Position).Magnitude
                             if dist < 1.5 then
                                 farmCollected[currentTarget] = true
                                 currentTarget = nil
@@ -987,7 +1005,7 @@ function startAutoFarm()
 
                     task.wait()
 
-                -- ============ TELEPORT (рандом 1.95–2.05) ============
+                -- ============ TELEPORT ============
                 elseif mode == "Teleport" then
                     stopFlyPhysics()
                     currentTarget = nil
@@ -1010,7 +1028,7 @@ function startAutoFarm()
                         end
                     end
 
-                -- ============ UNDERGROUND TELEPORT (рандом 1.95–2.05) ============
+                -- ============ UNDERGROUND TELEPORT ============
                 elseif mode == "Underground Teleport" then
                     stopFlyPhysics()
                     currentTarget = nil
