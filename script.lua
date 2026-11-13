@@ -593,7 +593,7 @@ createDropdown(farmContent, "Режим движения", {"Fly — лежа", 
     State.FarmMode = map[v] or "Fly Lying"
 end)
 
-createSlider(farmContent, "Скорость (10–60 studs/s)", 10, 60, 35, function(v) State.FarmSpeed = v end)
+createSlider(farmContent, "Скорость (10–60 studs/s)", 10, 60, 25, function(v) State.FarmSpeed = v end)
 
 createDropdown(farmContent, "Порядок сбора", {"Nearest Item", "Random Item"}, "Nearest Item", function(v)
     State.FarmOrder = v
