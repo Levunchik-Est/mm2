@@ -715,13 +715,19 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly: без единой остановки)
+-- AUTO FARM (Fly: без остановок + Teleport с рандомным интервалом)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
 local MAX_ATTEMPTS  = 5
-local FARM_TP_INTERVAL = 2
+local FARM_TP_MIN   = 1.95   -- минимальный интервал телепорта
+local FARM_TP_MAX   = 2.05   -- максимальный интервал телепорта
 local FARM_SPEED_DEFAULT = 25
+
+-- Случайный интервал телепортации в диапазоне [MIN, MAX]
+local function randomTPInterval()
+    return FARM_TP_MIN + math.random() * (FARM_TP_MAX - FARM_TP_MIN)
+end
 
 if State.FarmSpeed == nil or State.FarmSpeed == 35 then
     State.FarmSpeed = FARM_SPEED_DEFAULT
@@ -923,7 +929,7 @@ function startAutoFarm()
     farmAttempts = {}
 
     State._farmThread = task.spawn(function()
-        local currentTarget = nil   -- ← держим текущую цель между итерациями
+        local currentTarget = nil
 
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
@@ -944,7 +950,6 @@ function startAutoFarm()
                         startFlyPhysics()
                     end
 
-                    -- Если текущей цели нет или она исчезла — ищем новую
                     if not currentTarget or not currentTarget.Parent then
                         if currentTarget then
                             farmCollected[currentTarget] = true
@@ -963,7 +968,6 @@ function startAutoFarm()
                         end
                     end
 
-                    -- Летим к текущей цели, БЕЗ остановок
                     if currentTarget then
                         if not currentTarget.Parent then
                             farmCollected[currentTarget] = true
@@ -974,14 +978,6 @@ function startAutoFarm()
 
                             setFlyVelocityTo(currentTarget.Position, lying)
 
-                            -- Проверяем пролёт насквозь по смене направления
-                            if currentTarget:GetAttribute("__lastDist") then
-                                -- nope, не используем атрибут
-                            end
-
-                            -- Если очень близко — цель считается достигнутой,
-                            -- сразу летим к следующей в СЛЕДУЮЩЕЙ итерации,
-                            -- но НЕ тормозим
                             if dist < 1.5 then
                                 farmCollected[currentTarget] = true
                                 currentTarget = nil
@@ -991,7 +987,7 @@ function startAutoFarm()
 
                     task.wait()
 
-                -- ============ TELEPORT ============
+                -- ============ TELEPORT (рандом 1.95–2.05) ============
                 elseif mode == "Teleport" then
                     stopFlyPhysics()
                     currentTarget = nil
@@ -1010,11 +1006,11 @@ function startAutoFarm()
                                 farmAttempts[target] = (farmAttempts[target] or 0) + 1
                                 if farmAttempts[target] >= MAX_ATTEMPTS then farmCollected[target] = true end
                             end
-                            task.wait(FARM_TP_INTERVAL)
+                            task.wait(randomTPInterval())
                         end
                     end
 
-                -- ============ UNDERGROUND TELEPORT ============
+                -- ============ UNDERGROUND TELEPORT (рандом 1.95–2.05) ============
                 elseif mode == "Underground Teleport" then
                     stopFlyPhysics()
                     currentTarget = nil
@@ -1034,7 +1030,7 @@ function startAutoFarm()
                                 farmAttempts[target] = (farmAttempts[target] or 0) + 1
                                 if farmAttempts[target] >= MAX_ATTEMPTS then farmCollected[target] = true end
                             end
-                            task.wait(FARM_TP_INTERVAL)
+                            task.wait(randomTPInterval())
                         end
                     end
 
