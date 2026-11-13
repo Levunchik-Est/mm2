@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на Tween + безопасная высота)
+-- AUTO FARM (резервирование конфет через SetAttribute)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -786,7 +786,7 @@ local function isCandyPart(obj)
 end
 
 -- ------------------------------------------------------------
--- Резервирование
+-- Резервирование конфеты
 -- ------------------------------------------------------------
 local MY_UID = LocalPlayer.UserId
 
@@ -798,7 +798,9 @@ end
 local function reserve(item)
     if not item or not item.Parent then return false end
     local owner = item:GetAttribute("MM2_TargetedBy")
-    if owner ~= nil and owner ~= MY_UID then return false end
+    if owner ~= nil and owner ~= MY_UID then
+        return false
+    end
     pcall(function() item:SetAttribute("MM2_TargetedBy", MY_UID) end)
     return true
 end
@@ -812,7 +814,7 @@ local function release(item)
 end
 
 -- ------------------------------------------------------------
--- Поиск
+-- Поиск предметов
 -- ------------------------------------------------------------
 local function findItems()
     local items = {}
@@ -832,9 +834,13 @@ end
 local function pickTarget(items, fromPos)
     local free = {}
     for _, it in ipairs(items) do
-        if isFree(it) then table.insert(free, it) end
+        if isFree(it) then
+            table.insert(free, it)
+        end
     end
-    if #free == 0 then return nil end
+    if #free == 0 then
+        return nil
+    end
 
     if State.FarmOrder == "Random Item" then
         return free[math.random(1, #free)]
@@ -856,27 +862,12 @@ end
 local function waitCollected(item, timeout)
     local deadline = tick() + (timeout or 2)
     while tick() < deadline do
-        if not item or not item.Parent then return true end
+        if not item or not item.Parent then
+            return true
+        end
         task.wait(0.02)
     end
     return false
-end
-
--- ------------------------------------------------------------
--- Безопасная высота: Raycast от ВЫСОКОЙ точки над конфетой,
--- а не от игрока. Если пола нет — nil (не летим).
--- ------------------------------------------------------------
-local function getSafeFlyY(targetXZ)
-    local params = RaycastParams.new()
-    params.FilterDescendantsInstances = {LocalPlayer.Character}
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    -- Ищем пол прямо над целью: стартуем с 200 studs выше и бьём вниз
-    local origin = Vector3.new(targetXZ.X, 200, targetXZ.Z)
-    local result = Workspace:Raycast(origin, Vector3.new(0, -400, 0), params)
-    if result then
-        return result.Position.Y + 3
-    end
-    return nil  -- пола нет — не летим
 end
 
 -- ------------------------------------------------------------
@@ -912,71 +903,65 @@ local function doTeleportUnderground(targetPos)
 end
 
 -- ------------------------------------------------------------
--- FLY на Tween
+-- FLY на BodyVelocity + BodyGyro
 -- ------------------------------------------------------------
-local flyTween = nil
-local flyTweenConn = nil
+local flyBV = nil
+local flyBG = nil
 
-local function stopFlyTween()
-    if flyTweenConn then
-        pcall(function() flyTweenConn:Disconnect() end)
-        flyTweenConn = nil
-    end
-    if flyTween then
-        pcall(function() flyTween:Cancel() end)
-        flyTween = nil
-    end
-    freezeForFly(false)
+local function startFlyPhysics()
+    local hrp = getHRP()
+    local hum = getHumanoid()
+    if not hrp or not hum then return end
+
+    hum.PlatformStand = true
+    startNoclip()
+
+    flyBV = Instance.new("BodyVelocity")
+    flyBV.Name = "MM2_FlyBV"
+    flyBV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    flyBV.Velocity = Vector3.zero
+    flyBV.Parent = hrp
+
+    flyBG = Instance.new("BodyGyro")
+    flyBG.Name = "MM2_FlyBG"
+    flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    flyBG.CFrame = hrp.CFrame
+    flyBG.Parent = hrp
+end
+
+local function stopFlyPhysics()
+    if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
+    if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
+    local hum = getHumanoid()
+    if hum then hum.PlatformStand = false end
     stopNoclip()
 end
 
-local function tweenToTarget(target, speed, lying)
+local function setFlyVelocityTo(targetPos, lying)
+    if not flyBV or not flyBG then return end
     local hrp = getHRP()
-    if not hrp or not target or not target.Parent then return false end
+    if not hrp then return end
 
-    local safeY = getSafeFlyY(target.Position)
-    if not safeY then
-        -- пола нет — не летим
-        return false
-    end
+    local dir = targetPos - hrp.Position
+    local dist = dir.Magnitude
 
-    local startPos = hrp.Position
-    local targetPos = Vector3.new(target.Position.X, safeY, target.Position.Z)
-
-    local dist = (targetPos - startPos).Magnitude
-    if dist < 0.5 then return true end
-
-    local duration = dist / math.max(speed, 1)
-
-    local finalCF = CFrame.new(targetPos, Vector3.new(target.Position.X, safeY, target.Position.Z))
-    if lying then
-        finalCF = finalCF * CFrame.Angles(0, 0, math.rad(90))
-    end
-
-    local info = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0)
-    flyTween = TweenService:Create(hrp, info, {CFrame = finalCF})
-
-    local cancelled = false
-    flyTweenConn = RunService.Heartbeat:Connect(function()
-        local h = getHRP()
-        if h then h.AssemblyLinearVelocity = Vector3.zero end
-        if not target or not target.Parent then
-            cancelled = true
-            if flyTween then pcall(function() flyTween:Cancel() end) end
-            if flyTweenConn then pcall(function() flyTweenConn:Disconnect() end); flyTweenConn = nil end
+    if dist < 0.05 then
+        local lookAt = CFrame.new(hrp.Position, targetPos)
+        if lying then
+            lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
         end
-    end)
-
-    flyTween:Play()
-    flyTween.Completed:Wait()
-
-    if flyTweenConn then
-        pcall(function() flyTweenConn:Disconnect() end)
-        flyTweenConn = nil
+        flyBG.CFrame = lookAt
+        return
     end
-    flyTween = nil
 
-    return not cancelled
+    local speed = State.FarmSpeed
+    flyBV.Velocity = dir.Unit * speed
+
+    local lookAt = CFrame.new(hrp.Position, targetPos)
+    if lying then
+        lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
+    end
+    flyBG.CFrame = lookAt
 end
 
 -- ------------------------------------------------------------
@@ -995,18 +980,21 @@ function startAutoFarm()
             local hum = getHumanoid()
 
             if not hrp or not hum or hum.Health <= 0 then
-                stopFlyTween()
+                stopFlyPhysics()
                 release(currentTarget)
                 currentTarget = nil
                 task.wait(0.5)
             else
                 local mode = State.FarmMode
 
-                -- ============ FLY (Tween) ============
+                -- ============ FLY ============
                 if mode == "Fly Lying" or mode == "Fly Standing" then
                     local lying = (mode == "Fly Lying")
 
-                    -- Если цели нет или исчезла — ищем. Физику не трогаем!
+                    if not flyBV then
+                        startFlyPhysics()
+                    end
+
                     if not currentTarget or not currentTarget.Parent
                        or (currentTarget:GetAttribute("MM2_TargetedBy") ~= MY_UID
                            and currentTarget:GetAttribute("MM2_TargetedBy") ~= nil) then
@@ -1015,55 +1003,36 @@ function startAutoFarm()
 
                         local items = findItems()
                         if #items == 0 then
-                            -- Нет конфет — стоим, физику НЕ трогаем
-                            stopFlyTween()
+                            flyBV.Velocity = Vector3.zero
                             task.wait(0.4)
                         else
                             local candidate = pickTarget(items, hrp.Position)
                             if not candidate then
-                                stopFlyTween()
+                                flyBV.Velocity = Vector3.zero
                                 task.wait(0.25)
                             else
                                 if reserve(candidate) then
                                     currentTarget = candidate
                                 else
-                                    stopFlyTween()
                                     task.wait(0.05)
                                 end
                             end
                         end
                     end
 
-                    -- Летим только если есть цель
                     if currentTarget then
                         if not currentTarget.Parent then
                             farmCollected[currentTarget] = true
-                            release(currentTarget)
                             currentTarget = nil
                         else
-                            -- Включаем физику полёта ТОЛЬКО сейчас
-                            freezeForFly(true)
-                            startNoclip()
+                            setFlyVelocityTo(currentTarget.Position, lying)
 
-                            local speed = State.FarmSpeed
-                            local reached = tweenToTarget(currentTarget, speed, lying)
-
-                            if not currentTarget.Parent then
+                            local dist = (currentTarget.Position - hrp.Position).Magnitude
+                            if dist < 1.5 then
                                 farmCollected[currentTarget] = true
                                 release(currentTarget)
                                 currentTarget = nil
-                            elseif reached then
-                                farmAttempts[currentTarget] = (farmAttempts[currentTarget] or 0) + 1
-                                if farmAttempts[currentTarget] >= MAX_ATTEMPTS then
-                                    farmCollected[currentTarget] = true
-                                end
-                                release(currentTarget)
-                                currentTarget = nil
                             end
-
-                            -- После полёта возвращаем физику
-                            freezeForFly(false)
-                            stopNoclip()
                         end
                     end
 
@@ -1071,7 +1040,7 @@ function startAutoFarm()
 
                 -- ============ TELEPORT ============
                 elseif mode == "Teleport" then
-                    stopFlyTween()
+                    stopFlyPhysics()
                     release(currentTarget)
                     currentTarget = nil
                     local items = findItems()
@@ -1098,7 +1067,7 @@ function startAutoFarm()
 
                 -- ============ UNDERGROUND TELEPORT ============
                 elseif mode == "Underground Teleport" then
-                    stopFlyTween()
+                    stopFlyPhysics()
                     release(currentTarget)
                     currentTarget = nil
                     local items = findItems()
@@ -1131,7 +1100,7 @@ function startAutoFarm()
         end
 
         release(currentTarget)
-        stopFlyTween()
+        stopFlyPhysics()
     end)
 end
 
@@ -1147,7 +1116,7 @@ function stopAutoFarm()
     end
     farmCollected = {}
     farmAttempts = {}
-    stopFlyTween()
+    stopFlyPhysics()
 end
 
 -- ============================================================
