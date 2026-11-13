@@ -715,7 +715,7 @@ function stopAntiAFK()
 end
 
 -- ============================================================
--- AUTO FARM (Fly на BodyVelocity, усиленная живучесть)
+-- AUTO FARM (Fly на BodyVelocity — 3D-полёт с защитой)
 -- ============================================================
 local farmCollected = {}
 local farmAttempts  = {}
@@ -723,8 +723,8 @@ local MAX_ATTEMPTS  = 5
 local FARM_TP_MIN   = 1.95
 local FARM_TP_MAX   = 2.05
 local FARM_SPEED_DEFAULT = 25
-local TARGET_TIMEOUT = 10      -- сек: если летим к цели дольше — отпускаем
-local FAIL_RESET_COUNT = 15    -- подряд неудачных итераций → сброс раунда
+local TARGET_TIMEOUT = 10
+local FAIL_RESET_COUNT = 15
 
 local function randomTPInterval()
     return FARM_TP_MIN + math.random() * (FARM_TP_MAX - FARM_TP_MIN)
@@ -917,10 +917,8 @@ local function startFlyPhysics()
     local hum = getHumanoid()
     if not hrp or not hum then return false end
 
-    -- Если уже есть — не создаём дубликат
     if isFlyAlive() then return true end
 
-    -- Чистим мусор
     if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
     if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
 
@@ -952,8 +950,8 @@ local function stopFlyPhysics()
     stopNoclip()
 end
 
+-- 3D-полёт: Y плавно следует за высотой цели, но в пределах [safeMinY, safeMaxY]
 local function setFlyVelocityTo(targetPos, lying)
-    -- Страховка: если физика исчезла — пересоздаём
     if not isFlyAlive() then
         if not startFlyPhysics() then return end
     end
@@ -965,8 +963,14 @@ local function setFlyVelocityTo(targetPos, lying)
         flyFixedY = hrp.Position.Y
     end
 
-    local targetXZ = Vector3.new(targetPos.X, flyFixedY, targetPos.Z)
-    local dir = targetXZ - hrp.Position
+    -- Диапазон безопасной высоты: ±15 studs от высоты старта
+    local safeMinY = flyFixedY - 15
+    local safeMaxY = flyFixedY + 15
+
+    local targetY = math.clamp(targetPos.Y, safeMinY, safeMaxY)
+    local target3D = Vector3.new(targetPos.X, targetY, targetPos.Z)
+
+    local dir = target3D - hrp.Position
     local dist = dir.Magnitude
 
     if dist < 1 then
@@ -976,7 +980,7 @@ local function setFlyVelocityTo(targetPos, lying)
         flyBV.Velocity = dir.Unit * speed
     end
 
-    local lookAt = CFrame.new(hrp.Position, targetXZ)
+    local lookAt = CFrame.new(hrp.Position, target3D)
     if lying then
         lookAt = lookAt * CFrame.Angles(0, 0, math.rad(90))
     end
@@ -1001,7 +1005,7 @@ function startAutoFarm()
 
     State._farmThread = task.spawn(function()
         local currentTarget = nil
-        local currentTargetStart = nil    -- когда взяли цель
+        local currentTargetStart = nil
         local emptyStreakStart = nil
         local failStreak = 0
         local EMPTY_RESET_SEC = 5
@@ -1109,7 +1113,7 @@ function startAutoFarm()
                             if isFlyAlive() then
                                 setFlyVelocityTo(currentTarget.Position, lying)
 
-                                local dist = (Vector3.new(currentTarget.Position.X, flyFixedY or hrp.Position.Y, currentTarget.Position.Z) - hrp.Position).Magnitude
+                                local dist = (currentTarget.Position - hrp.Position).Magnitude
 
                                 if dist < 2 then
                                     farmCollected[currentTarget] = true
