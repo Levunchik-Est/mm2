@@ -723,6 +723,8 @@ local MAX_ATTEMPTS  = 5
 local FARM_TP_MIN   = 1.95
 local FARM_TP_MAX   = 2.05
 local FARM_SPEED_DEFAULT = 25
+local TARGET_TIMEOUT    = 10   -- сек: цель не собралась — отпускаем
+local FAIL_RESET_COUNT  = 15   -- подряд неудач → сброс раунда
 
 local function randomTPInterval()
     return FARM_TP_MIN + math.random() * (FARM_TP_MAX - FARM_TP_MIN)
@@ -908,10 +910,27 @@ end
 local flyBV = nil
 local flyBG = nil
 
+-- Проверка: физика полёта жива (объекты на месте, привязаны к текущему HRP)
+local function isFlyAlive()
+    if not flyBV or not flyBG then return false end
+    if not flyBV.Parent or not flyBG.Parent then return false end
+    local hrp = getHRP()
+    if not hrp then return false end
+    if flyBV.Parent ~= hrp or flyBG.Parent ~= hrp then return false end
+    return true
+end
+
 local function startFlyPhysics()
     local hrp = getHRP()
     local hum = getHumanoid()
-    if not hrp or not hum then return end
+    if not hrp or not hum then return false end
+
+    -- Уже есть рабочие — не создаём дубликат
+    if isFlyAlive() then return true end
+
+    -- Чистим старые (могли остаться «мёртвыми» после респавна)
+    if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
+    if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
 
     hum.PlatformStand = true
     startNoclip()
@@ -927,6 +946,8 @@ local function startFlyPhysics()
     flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
     flyBG.CFrame = hrp.CFrame
     flyBG.Parent = hrp
+
+    return true
 end
 
 local function stopFlyPhysics()
@@ -938,7 +959,11 @@ local function stopFlyPhysics()
 end
 
 local function setFlyVelocityTo(targetPos, lying)
-    if not flyBV or not flyBG then return end
+    -- Страховка: если физика исчезла (смерть/респавн/уничтожение) — пересоздаём
+    if not isFlyAlive() then
+        if not startFlyPhysics() then return end
+    end
+
     local hrp = getHRP()
     if not hrp then return end
 
@@ -974,6 +999,10 @@ function startAutoFarm()
 
     State._farmThread = task.spawn(function()
         local currentTarget = nil
+        local currentTargetStart = nil
+        local emptyStreakStart = nil
+        local failStreak = 0
+        local EMPTY_RESET_SEC = 5
 
         while State.AutoFarm and not State._closed do
             local hrp = getHRP()
@@ -983,15 +1012,58 @@ function startAutoFarm()
                 stopFlyPhysics()
                 release(currentTarget)
                 currentTarget = nil
+                currentTargetStart = nil
+                emptyStreakStart = nil
+                failStreak = 0
                 task.wait(0.5)
             else
                 local mode = State.FarmMode
+                local allItems = findItems()
+
+                -- === Автосброс между раундами ===
+                if #allItems == 0 then
+                    if not emptyStreakStart then
+                        emptyStreakStart = tick()
+                    elseif tick() - emptyStreakStart > EMPTY_RESET_SEC then
+                        farmCollected = {}
+                        farmAttempts = {}
+                        release(currentTarget)
+                        currentTarget = nil
+                        currentTargetStart = nil
+                        stopFlyPhysics()
+                        emptyStreakStart = tick()
+                        failStreak = 0
+                    end
+                    task.wait(0.4)
+                else
+                    emptyStreakStart = nil
+                end
+
+                -- === Автосброс при затяжном провале ===
+                if failStreak >= FAIL_RESET_COUNT then
+                    farmCollected = {}
+                    farmAttempts = {}
+                    release(currentTarget)
+                    currentTarget = nil
+                    currentTargetStart = nil
+                    failStreak = 0
+                end
 
                 -- ============ FLY ============
                 if mode == "Fly Lying" or mode == "Fly Standing" then
                     local lying = (mode == "Fly Lying")
 
-                    if not flyBV then
+                    -- Таймаут текущей цели
+                    if currentTarget and currentTargetStart
+                       and (tick() - currentTargetStart) > TARGET_TIMEOUT then
+                        release(currentTarget)
+                        currentTarget = nil
+                        currentTargetStart = nil
+                        failStreak = failStreak + 1
+                    end
+
+                    -- Автопересоздание физики, если её нет
+                    if not isFlyAlive() then
                         startFlyPhysics()
                     end
 
@@ -1000,19 +1072,22 @@ function startAutoFarm()
                            and currentTarget:GetAttribute("MM2_TargetedBy") ~= nil) then
                         release(currentTarget)
                         currentTarget = nil
+                        currentTargetStart = nil
 
                         local items = findItems()
                         if #items == 0 then
-                            flyBV.Velocity = Vector3.zero
+                            if flyBV then flyBV.Velocity = Vector3.zero end
                             task.wait(0.4)
                         else
                             local candidate = pickTarget(items, hrp.Position)
                             if not candidate then
-                                flyBV.Velocity = Vector3.zero
+                                if flyBV then flyBV.Velocity = Vector3.zero end
                                 task.wait(0.25)
                             else
                                 if reserve(candidate) then
                                     currentTarget = candidate
+                                    currentTargetStart = tick()
+                                    failStreak = 0
                                 else
                                     task.wait(0.05)
                                 end
@@ -1023,7 +1098,9 @@ function startAutoFarm()
                     if currentTarget then
                         if not currentTarget.Parent then
                             farmCollected[currentTarget] = true
+                            release(currentTarget)
                             currentTarget = nil
+                            currentTargetStart = nil
                         else
                             setFlyVelocityTo(currentTarget.Position, lying)
 
@@ -1032,6 +1109,8 @@ function startAutoFarm()
                                 farmCollected[currentTarget] = true
                                 release(currentTarget)
                                 currentTarget = nil
+                                currentTargetStart = nil
+                                failStreak = 0
                             end
                         end
                     end
@@ -1043,6 +1122,7 @@ function startAutoFarm()
                     stopFlyPhysics()
                     release(currentTarget)
                     currentTarget = nil
+                    currentTargetStart = nil
                     local items = findItems()
                     if #items == 0 then
                         task.wait(0.4)
@@ -1053,10 +1133,13 @@ function startAutoFarm()
                         elseif reserve(candidate) then
                             doTeleportNormal(candidate.Position)
                             local ok = waitCollected(candidate, 1.0)
-                            if ok then farmCollected[candidate] = true
+                            if ok then
+                                farmCollected[candidate] = true
+                                failStreak = 0
                             else
                                 farmAttempts[candidate] = (farmAttempts[candidate] or 0) + 1
                                 if farmAttempts[candidate] >= MAX_ATTEMPTS then farmCollected[candidate] = true end
+                                failStreak = failStreak + 1
                             end
                             release(candidate)
                             task.wait(randomTPInterval())
@@ -1070,6 +1153,7 @@ function startAutoFarm()
                     stopFlyPhysics()
                     release(currentTarget)
                     currentTarget = nil
+                    currentTargetStart = nil
                     local items = findItems()
                     if #items == 0 then
                         task.wait(0.4)
@@ -1081,10 +1165,13 @@ function startAutoFarm()
                             local hold = doTeleportUnderground(candidate.Position)
                             local ok = waitCollected(candidate, 1.0)
                             if hold then pcall(function() task.cancel(hold) end) end
-                            if ok then farmCollected[candidate] = true
+                            if ok then
+                                farmCollected[candidate] = true
+                                failStreak = 0
                             else
                                 farmAttempts[candidate] = (farmAttempts[candidate] or 0) + 1
                                 if farmAttempts[candidate] >= MAX_ATTEMPTS then farmCollected[candidate] = true end
+                                failStreak = failStreak + 1
                             end
                             release(candidate)
                             task.wait(randomTPInterval())
