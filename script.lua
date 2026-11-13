@@ -786,17 +786,15 @@ local function isCandyPart(obj)
 end
 
 -- ------------------------------------------------------------
--- Резервирование конфеты (второй вариант)
+-- Резервирование конфеты
 -- ------------------------------------------------------------
 local MY_UID = LocalPlayer.UserId
 
--- Конфета свободна, если на ней нет атрибута или атрибут — мой
 local function isFree(item)
     local owner = item:GetAttribute("MM2_TargetedBy")
     return (owner == nil) or (owner == MY_UID)
 end
 
--- Забронировать (если ещё свободна)
 local function reserve(item)
     if not item or not item.Parent then return false end
     local owner = item:GetAttribute("MM2_TargetedBy")
@@ -807,7 +805,6 @@ local function reserve(item)
     return true
 end
 
--- Освободить (только если бронь моя)
 local function release(item)
     if not item or not item.Parent then return end
     local owner = item:GetAttribute("MM2_TargetedBy")
@@ -834,7 +831,6 @@ local function findItems()
     return items
 end
 
--- Выбор цели: только свободные (не забронированные другими)
 local function pickTarget(items, fromPos)
     local free = {}
     for _, it in ipairs(items) do
@@ -843,7 +839,6 @@ local function pickTarget(items, fromPos)
         end
     end
     if #free == 0 then
-        -- Все заняты — не выбираем ничего, ждём
         return nil
     end
 
@@ -1000,7 +995,6 @@ function startAutoFarm()
                         startFlyPhysics()
                     end
 
-                    -- Если цели нет или она исчезла/занята другим — ищем новую
                     if not currentTarget or not currentTarget.Parent
                        or (currentTarget:GetAttribute("MM2_TargetedBy") ~= MY_UID
                            and currentTarget:GetAttribute("MM2_TargetedBy") ~= nil) then
@@ -1014,11 +1008,9 @@ function startAutoFarm()
                         else
                             local candidate = pickTarget(items, hrp.Position)
                             if not candidate then
-                                -- Все свободные заняты — ждём
                                 flyBV.Velocity = Vector3.zero
                                 task.wait(0.25)
                             else
-                                -- Резервируем (если гонка — reserve вернёт false)
                                 if reserve(candidate) then
                                     currentTarget = candidate
                                 else
@@ -1117,7 +1109,6 @@ function stopAutoFarm()
         task.cancel(State._farmThread)
         State._farmThread = nil
     end
-    -- Снимаем все мои брони при выключении
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("BasePart") and obj:GetAttribute("MM2_TargetedBy") == MY_UID then
             pcall(function() obj:SetAttribute("MM2_TargetedBy", nil) end)
