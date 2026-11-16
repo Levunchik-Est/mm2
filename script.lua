@@ -723,8 +723,9 @@ local MAX_ATTEMPTS  = 5
 local FARM_TP_MIN   = 1.95
 local FARM_TP_MAX   = 2.05
 local FARM_SPEED_DEFAULT = 25
-local TARGET_TIMEOUT    = 10   -- сек: цель не собралась — отпускаем
-local FAIL_RESET_COUNT  = 15   -- подряд неудач → сброс раунда
+local TARGET_TIMEOUT    = 10
+local FAIL_RESET_COUNT  = 15
+local PICK_POOL_SIZE    = 3   -- случайный выбор из N ближайших
 
 local function randomTPInterval()
     return FARM_TP_MIN + math.random() * (FARM_TP_MAX - FARM_TP_MIN)
@@ -844,16 +845,21 @@ local function pickTarget(items, fromPos)
         return nil
     end
 
+    -- Random Item — полностью случайная из всех свободных
     if State.FarmOrder == "Random Item" then
         return free[math.random(1, #free)]
     end
 
-    local best, bestDist = nil, math.huge
+    -- Nearest Item — случайная из N ближайших (снижает коллизии между ботами)
+    local sorted = {}
     for _, it in ipairs(free) do
-        local d = (it.Position - fromPos).Magnitude
-        if d < bestDist then best, bestDist = it, d end
+        table.insert(sorted, {item = it, dist = (it.Position - fromPos).Magnitude})
     end
-    return best
+    table.sort(sorted, function(a, b) return a.dist < b.dist end)
+
+    local k = math.min(PICK_POOL_SIZE, #sorted)
+    local idx = math.random(1, k)
+    return sorted[idx].item
 end
 
 local function freezeForFly(on)
@@ -910,7 +916,6 @@ end
 local flyBV = nil
 local flyBG = nil
 
--- Проверка: физика полёта жива (объекты на месте, привязаны к текущему HRP)
 local function isFlyAlive()
     if not flyBV or not flyBG then return false end
     if not flyBV.Parent or not flyBG.Parent then return false end
@@ -925,10 +930,8 @@ local function startFlyPhysics()
     local hum = getHumanoid()
     if not hrp or not hum then return false end
 
-    -- Уже есть рабочие — не создаём дубликат
     if isFlyAlive() then return true end
 
-    -- Чистим старые (могли остаться «мёртвыми» после респавна)
     if flyBV then pcall(function() flyBV:Destroy() end); flyBV = nil end
     if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
 
@@ -959,7 +962,6 @@ local function stopFlyPhysics()
 end
 
 local function setFlyVelocityTo(targetPos, lying)
-    -- Страховка: если физика исчезла (смерть/респавн/уничтожение) — пересоздаём
     if not isFlyAlive() then
         if not startFlyPhysics() then return end
     end
@@ -1053,7 +1055,6 @@ function startAutoFarm()
                 if mode == "Fly Lying" or mode == "Fly Standing" then
                     local lying = (mode == "Fly Lying")
 
-                    -- Таймаут текущей цели
                     if currentTarget and currentTargetStart
                        and (tick() - currentTargetStart) > TARGET_TIMEOUT then
                         release(currentTarget)
@@ -1062,7 +1063,6 @@ function startAutoFarm()
                         failStreak = failStreak + 1
                     end
 
-                    -- Автопересоздание физики, если её нет
                     if not isFlyAlive() then
                         startFlyPhysics()
                     end
