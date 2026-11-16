@@ -725,7 +725,7 @@ local FARM_TP_MAX   = 2.05
 local FARM_SPEED_DEFAULT = 25
 local TARGET_TIMEOUT    = 10
 local FAIL_RESET_COUNT  = 15
-local PICK_POOL_SIZE    = 3   -- случайный выбор из N ближайших
+local PICK_POOL_SIZE    = 3
 
 local function randomTPInterval()
     return FARM_TP_MIN + math.random() * (FARM_TP_MAX - FARM_TP_MIN)
@@ -845,12 +845,10 @@ local function pickTarget(items, fromPos)
         return nil
     end
 
-    -- Random Item — полностью случайная из всех свободных
     if State.FarmOrder == "Random Item" then
         return free[math.random(1, #free)]
     end
 
-    -- Nearest Item — случайная из N ближайших (снижает коллизии между ботами)
     local sorted = {}
     for _, it in ipairs(free) do
         table.insert(sorted, {item = it, dist = (it.Position - fromPos).Magnitude})
@@ -940,13 +938,13 @@ local function startFlyPhysics()
 
     flyBV = Instance.new("BodyVelocity")
     flyBV.Name = "MM2_FlyBV"
-    flyBV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    flyBV.MaxForce = Vector3.new(1e5, 1e5, 1e5)
     flyBV.Velocity = Vector3.zero
     flyBV.Parent = hrp
 
     flyBG = Instance.new("BodyGyro")
     flyBG.Name = "MM2_FlyBG"
-    flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    flyBG.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
     flyBG.CFrame = hrp.CFrame
     flyBG.Parent = hrp
 
@@ -1022,7 +1020,6 @@ function startAutoFarm()
                 local mode = State.FarmMode
                 local allItems = findItems()
 
-                -- === Автосброс между раундами ===
                 if #allItems == 0 then
                     if not emptyStreakStart then
                         emptyStreakStart = tick()
@@ -1041,7 +1038,6 @@ function startAutoFarm()
                     emptyStreakStart = nil
                 end
 
-                -- === Автосброс при затяжном провале ===
                 if failStreak >= FAIL_RESET_COUNT then
                     farmCollected = {}
                     farmAttempts = {}
